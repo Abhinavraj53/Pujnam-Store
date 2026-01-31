@@ -6,8 +6,19 @@ const sendEmail = async (options) => {
     
     // Priority 1: Try Hostinger SMTP first (if configured)
     if (process.env.HOSTINGER_EMAIL_USER && process.env.HOSTINGER_EMAIL_PASSWORD) {
-        // Try both ports: 587 (TLS) first, then 465 (SSL)
-        const portsToTry = process.env.HOSTINGER_SMTP_PORT ? [parseInt(process.env.HOSTINGER_SMTP_PORT)] : [587, 465];
+        // Detect if running on Render
+        const isRender = process.env.RENDER || process.env.RENDER_EXTERNAL_URL || false;
+        
+        // On Render, try port 587 first (TLS works better), then 465
+        // On localhost, use configured port or default to 465
+        let portsToTry;
+        if (isRender) {
+            portsToTry = process.env.HOSTINGER_SMTP_PORT ? [parseInt(process.env.HOSTINGER_SMTP_PORT)] : [587, 465];
+            console.log('🌐 Running on Render - using optimized SMTP settings');
+        } else {
+            portsToTry = process.env.HOSTINGER_SMTP_PORT ? [parseInt(process.env.HOSTINGER_SMTP_PORT)] : [465, 587];
+            console.log('💻 Running on localhost');
+        }
         
         for (const port of portsToTry) {
             let transporter = null;
@@ -16,7 +27,8 @@ const sendEmail = async (options) => {
                 
                 console.log(`📧 Attempting to send email via Hostinger SMTP (port ${port}, secure: ${secure}) to ${to}`);
                 
-                transporter = nodemailer.createTransport({
+                // Render-specific optimizations
+                const transporterConfig = {
                     host: 'smtp.hostinger.com',
                     port: port,
                     secure: secure,
@@ -25,14 +37,23 @@ const sendEmail = async (options) => {
                         user: process.env.HOSTINGER_EMAIL_USER,
                         pass: process.env.HOSTINGER_EMAIL_PASSWORD
                     },
-                    connectionTimeout: 20000, // 20 seconds (increased)
-                    greetingTimeout: 10000, // 10 seconds (increased)
-                    socketTimeout: 20000, // 20 seconds (increased)
+                    connectionTimeout: isRender ? 30000 : 20000, // 30s on Render, 20s local
+                    greetingTimeout: isRender ? 15000 : 10000, // 15s on Render, 10s local
+                    socketTimeout: isRender ? 30000 : 20000, // 30s on Render, 20s local
                     tls: {
                         rejectUnauthorized: false,
-                        minVersion: 'TLSv1'
+                        minVersion: 'TLSv1.2', // Use TLS 1.2+ for better compatibility
+                        ciphers: 'SSLv3' // Try different cipher on Render
                     }
-                });
+                };
+                
+                // Additional Render-specific options
+                if (isRender) {
+                    transporterConfig.pool = false; // Disable pooling on Render
+                    transporterConfig.maxConnections = 1;
+                }
+                
+                transporter = nodemailer.createTransport(transporterConfig);
                 
                 const mailOptions = {
                     from: from || `"Pujnam Store" <${process.env.HOSTINGER_EMAIL_USER}>`,
@@ -41,10 +62,11 @@ const sendEmail = async (options) => {
                     html: html
                 };
                 
-                // Try to send with longer timeout
+                // Try to send with longer timeout on Render
+                const timeoutDuration = isRender ? 35000 : 25000;
                 const sendPromise = transporter.sendMail(mailOptions);
                 const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error(`Hostinger SMTP timeout (port ${port})`)), 25000)
+                    setTimeout(() => reject(new Error(`Hostinger SMTP timeout (port ${port})`)), timeoutDuration)
                 );
                 
                 const result = await Promise.race([sendPromise, timeoutPromise]);
@@ -60,6 +82,9 @@ const sendEmail = async (options) => {
                 return true;
             } catch (error) {
                 console.error(`❌ Hostinger SMTP error (port ${port}):`, error.message || error);
+                if (error.code) {
+                    console.error(`Error code: ${error.command || error.code}`);
+                }
                 
                 if (transporter) {
                     try {
@@ -72,6 +97,8 @@ const sendEmail = async (options) => {
                 // If this is not the last port, try next port
                 if (port !== portsToTry[portsToTry.length - 1]) {
                     console.log(`🔄 Trying next port...`);
+                    // Wait a bit before trying next port
+                    await new Promise(resolve => setTimeout(resolve, 1000));
                     continue;
                 } else {
                     console.log('🔄 All Hostinger ports failed, falling back to Resend...');
