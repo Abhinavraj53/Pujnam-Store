@@ -11,101 +11,237 @@ const generateVerificationCode = () => {
     return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Email transporter configuration
+// Email transporter configuration with timeout and connection settings
 const createTransporter = () => {
-    // Using Gmail SMTP (you can configure with your email service)
+    // Using Gmail SMTP with proper timeout and connection settings for Render
     return nodemailer.createTransport({
         service: 'gmail',
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false, // true for 465, false for other ports
         auth: {
             user: process.env.EMAIL_USER || 'your-email@gmail.com',
             pass: process.env.EMAIL_PASSWORD || 'your-app-password'
+        },
+        // Connection timeout settings for Render
+        connectionTimeout: 60000, // 60 seconds
+        greetingTimeout: 30000, // 30 seconds
+        socketTimeout: 60000, // 60 seconds
+        // Retry settings
+        pool: true,
+        maxConnections: 1,
+        maxMessages: 3,
+        // Additional options for better reliability
+        tls: {
+            rejectUnauthorized: false // Allow self-signed certificates if needed
         }
     });
 };
 
-// Send verification email
-const sendVerificationEmail = async (email, code) => {
-    try {
-        const transporter = createTransporter();
-        const mailOptions = {
-            from: process.env.EMAIL_USER || 'noreply@pujnamstore.com',
-            to: email,
-            subject: 'Email Verification Code - Pujnam Store',
-            html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                    <h2 style="color: #FF8C00;">Email Verification</h2>
-                    <p>Thank you for registering with Pujnam Store!</p>
-                    <p>Your verification code is:</p>
-                    <div style="background-color: #f3f4f6; padding: 20px; text-align: center; margin: 20px 0;">
-                        <h1 style="color: #FF8C00; font-size: 32px; margin: 0; letter-spacing: 5px;">${code}</h1>
+// Send verification email with retry logic
+const sendVerificationEmail = async (email, code, retries = 2) => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const transporter = createTransporter();
+            const mailOptions = {
+                from: process.env.EMAIL_USER || 'noreply@pujnamstore.com',
+                to: email,
+                subject: 'Email Verification Code - Pujnam Store',
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                        <h2 style="color: #FF8C00;">Email Verification</h2>
+                        <p>Thank you for registering with Pujnam Store!</p>
+                        <p>Your verification code is:</p>
+                        <div style="background-color: #f3f4f6; padding: 20px; text-align: center; margin: 20px 0;">
+                            <h1 style="color: #FF8C00; font-size: 32px; margin: 0; letter-spacing: 5px;">${code}</h1>
+                        </div>
+                        <p>This code will expire in 10 minutes.</p>
+                        <p>If you didn't create an account, please ignore this email.</p>
+                        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+                        <p style="color: #6b7280; font-size: 12px;">© Pujnam Store - Your Trusted Puja Store</p>
                     </div>
-                    <p>This code will expire in 10 minutes.</p>
-                    <p>If you didn't create an account, please ignore this email.</p>
-                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-                    <p style="color: #6b7280; font-size: 12px;">© Pujnam Store - Your Trusted Puja Store</p>
-                </div>
-            `
-        };
-        await transporter.sendMail(mailOptions);
-        return true;
-    } catch (error) {
-        console.error('Email sending error:', error);
-        return false;
+                `
+            };
+            
+            // Set timeout for sendMail
+            const sendPromise = transporter.sendMail(mailOptions);
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Email send timeout')), 30000)
+            );
+            
+            await Promise.race([sendPromise, timeoutPromise]);
+            console.log(`✅ Verification email sent to ${email} (attempt ${attempt + 1})`);
+            return true;
+        } catch (error) {
+            console.error(`❌ Email sending error (attempt ${attempt + 1}/${retries + 1}):`, error.message);
+            
+            // If it's the last attempt, return false
+            if (attempt === retries) {
+                console.error(`Failed to send verification email to ${email} after ${retries + 1} attempts`);
+                return false;
+            }
+            
+            // Wait before retry (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        }
     }
+    return false;
 };
 
-// Send password reset OTP email
-const sendPasswordResetOTP = async (email, code) => {
-    try {
-        const transporter = createTransporter();
-        const Settings = require('../models/Settings');
-        const storeSettings = await Settings.getSettings();
-        const storeName = storeSettings.storeName || 'Pujnam Store';
-        
-        const mailOptions = {
-            from: process.env.EMAIL_USER || 'noreply@pujnamstore.com',
-            to: email,
-            subject: `Password Reset OTP - ${storeName}`,
-            html: `
-                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-                    <div style="background: linear-gradient(135deg, #FF8C00 0%, #FF6B00 100%); padding: 30px; text-align: center;">
-                        <h1 style="color: #ffffff; margin: 0; font-size: 28px;">${storeName}</h1>
-                        <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 14px;">AAPKI AASTHA KA SAARTHI</p>
-                    </div>
-                    
-                    <div style="padding: 30px;">
-                        <h2 style="color: #FF8C00; margin-top: 0;">Password Reset Request</h2>
-                        <p>We received a request to reset your password for your ${storeName} account.</p>
-                        <p>Use the following OTP to reset your password:</p>
-                        
-                        <div style="background-color: #f3f4f6; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px;">
-                            <h1 style="color: #FF8C00; font-size: 36px; margin: 0; letter-spacing: 8px; font-weight: bold;">${code}</h1>
+// Send password reset OTP email with retry logic
+const sendPasswordResetOTP = async (email, code, retries = 2) => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const transporter = createTransporter();
+            const Settings = require('../models/Settings');
+            const storeSettings = await Settings.getSettings();
+            const storeName = storeSettings.storeName || 'Pujnam Store';
+            
+            const mailOptions = {
+                from: process.env.EMAIL_USER || 'noreply@pujnamstore.com',
+                to: email,
+                subject: `Password Reset OTP - ${storeName}`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+                        <div style="background: linear-gradient(135deg, #FF8C00 0%, #FF6B00 100%); padding: 30px; text-align: center;">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px;">${storeName}</h1>
+                            <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 14px;">AAPKI AASTHA KA SAARTHI</p>
                         </div>
                         
-                        <p style="color: #dc2626; font-weight: bold;">⚠️ This OTP will expire in 10 minutes.</p>
-                        
-                        <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                            <p style="margin: 0; color: #92400e;"><strong>Security Tip:</strong> If you didn't request this password reset, please ignore this email. Your password will remain unchanged.</p>
+                        <div style="padding: 30px;">
+                            <h2 style="color: #FF8C00; margin-top: 0;">Password Reset Request</h2>
+                            <p>We received a request to reset your password for your ${storeName} account.</p>
+                            <p>Use the following OTP to reset your password:</p>
+                            
+                            <div style="background-color: #f3f4f6; padding: 20px; text-align: center; margin: 20px 0; border-radius: 8px;">
+                                <h1 style="color: #FF8C00; font-size: 36px; margin: 0; letter-spacing: 8px; font-weight: bold;">${code}</h1>
+                            </div>
+                            
+                            <p style="color: #dc2626; font-weight: bold;">⚠️ This OTP will expire in 10 minutes.</p>
+                            
+                            <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                <p style="margin: 0; color: #92400e;"><strong>Security Tip:</strong> If you didn't request this password reset, please ignore this email. Your password will remain unchanged.</p>
+                            </div>
+                            
+                            <p>For security reasons, do not share this OTP with anyone. ${storeName} staff will never ask for your OTP.</p>
+                            
+                            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
+                            <p style="color: #6b7280; font-size: 12px; text-align: center;">
+                                © ${new Date().getFullYear()} ${storeName} - Your Trusted Puja Store<br>
+                                This is an automated email, please do not reply.
+                            </p>
                         </div>
-                        
-                        <p>For security reasons, do not share this OTP with anyone. ${storeName} staff will never ask for your OTP.</p>
-                        
-                        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
-                        <p style="color: #6b7280; font-size: 12px; text-align: center;">
-                            © ${new Date().getFullYear()} ${storeName} - Your Trusted Puja Store<br>
-                            This is an automated email, please do not reply.
-                        </p>
                     </div>
-                </div>
-            `
-        };
-        await transporter.sendMail(mailOptions);
-        console.log(`Password reset OTP sent to ${email}`);
-        return true;
-    } catch (error) {
-        console.error('Password reset email sending error:', error);
-        return false;
+                `
+            };
+            
+            // Set timeout for sendMail
+            const sendPromise = transporter.sendMail(mailOptions);
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Email send timeout')), 30000)
+            );
+            
+            await Promise.race([sendPromise, timeoutPromise]);
+            console.log(`✅ Password reset OTP sent to ${email} (attempt ${attempt + 1})`);
+            return true;
+        } catch (error) {
+            console.error(`❌ Password reset email error (attempt ${attempt + 1}/${retries + 1}):`, error.message);
+            
+            if (attempt === retries) {
+                console.error(`Failed to send password reset OTP to ${email} after ${retries + 1} attempts`);
+                return false;
+            }
+            
+            // Wait before retry (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        }
     }
+    return false;
+};
+
+// Send password change OTP email with retry logic
+const sendPasswordChangeOTP = async (email, code, userName, retries = 2) => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            const transporter = createTransporter();
+            const Settings = require('../models/Settings');
+            const storeSettings = await Settings.getSettings();
+            const storeName = storeSettings.storeName || 'Pujnam Store';
+            
+            const mailOptions = {
+                from: process.env.EMAIL_USER || 'noreply@pujnamstore.com',
+                to: email,
+                subject: `Password Change OTP - ${storeName}`,
+                html: `
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+                        <div style="background: linear-gradient(135deg, #FF8C00 0%, #FF6B00 100%); padding: 30px; text-align: center;">
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px;">${storeName}</h1>
+                            <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 14px;">AAPKI AASTHA KA SAARTHI</p>
+                        </div>
+                        
+                        <div style="padding: 30px;">
+                            <h2 style="color: #FF8C00; margin-top: 0;">Password Change Request</h2>
+                            <p>Dear ${userName || 'Valued Customer'},</p>
+                            <p>We received a request to change the password for your ${storeName} account.</p>
+                            <p>Use the following OTP to change your password:</p>
+                            
+                            <div style="background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%); padding: 25px; text-align: center; margin: 20px 0; border-radius: 8px; border: 2px solid #FF8C00;">
+                                <h1 style="color: #FF8C00; font-size: 42px; margin: 0; letter-spacing: 10px; font-weight: bold; text-shadow: 2px 2px 4px rgba(0,0,0,0.1);">${code}</h1>
+                            </div>
+                            
+                            <p style="color: #dc2626; font-weight: bold; text-align: center;">⚠️ This OTP will expire in 10 minutes.</p>
+                            
+                            <div style="background-color: #dbeafe; border-left: 4px solid #3b82f6; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                <p style="margin: 0; color: #1e40af;"><strong>🔒 Security Information:</strong></p>
+                                <ul style="margin: 10px 0 0 0; padding-left: 20px; color: #1e40af;">
+                                    <li>This OTP is valid for 10 minutes only</li>
+                                    <li>Do not share this OTP with anyone</li>
+                                    <li>${storeName} staff will never ask for your OTP</li>
+                                    <li>If you didn't request this, please secure your account immediately</li>
+                                </ul>
+                            </div>
+                            
+                            <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                                <p style="margin: 0; color: #92400e;"><strong>⚠️ Important:</strong> If you didn't request this password change, please ignore this email and consider changing your account password immediately for security.</p>
+                            </div>
+                            
+                            <p style="text-align: center; margin-top: 30px;">
+                                <a href="#" style="background-color: #FF8C00; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold;">Change Password</a>
+                            </p>
+                            
+                            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
+                            <p style="color: #6b7280; font-size: 12px; text-align: center;">
+                                © ${new Date().getFullYear()} ${storeName} - Your Trusted Puja Store<br>
+                                This is an automated email, please do not reply.<br>
+                                For support, contact: ${storeSettings.storeEmail || 'support@pujnamstore.com'}
+                            </p>
+                        </div>
+                    </div>
+                `
+            };
+            
+            // Set timeout for sendMail
+            const sendPromise = transporter.sendMail(mailOptions);
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Email send timeout')), 30000)
+            );
+            
+            await Promise.race([sendPromise, timeoutPromise]);
+            console.log(`✅ Password change OTP sent to ${email} (attempt ${attempt + 1})`);
+            return true;
+        } catch (error) {
+            console.error(`❌ Password change email error (attempt ${attempt + 1}/${retries + 1}):`, error.message);
+            
+            if (attempt === retries) {
+                console.error(`Failed to send password change OTP to ${email} after ${retries + 1} attempts`);
+                return false;
+            }
+            
+            // Wait before retry (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        }
+    }
+    return false;
 };
 
 // Register (without email verification - verification code will be sent)
@@ -136,17 +272,17 @@ router.post('/register', async (req, res) => {
         });
         await user.save();
 
-        // Send verification email
-        const emailSent = await sendVerificationEmail(email, verificationCode);
-        if (!emailSent) {
-            // If email fails, still save user but log error
-            console.error('Failed to send verification email to:', email);
-        }
+        // Send verification email (non-blocking - don't fail registration if email fails)
+        sendVerificationEmail(email, verificationCode).catch(err => {
+            console.error('Background email send error:', err);
+        });
 
+        // Always return success even if email fails (email will be sent in background)
         res.status(201).json({
             message: 'Registration successful. Please verify your email.',
             requiresVerification: true,
-            email: user.email
+            email: user.email,
+            note: 'Verification code has been sent to your email. If you don\'t receive it, you can request a new code.'
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -176,13 +312,16 @@ router.post('/send-verification-code', async (req, res) => {
         user.emailVerificationCodeExpiry = codeExpiry;
         await user.save();
 
-        // Send verification email
-        const emailSent = await sendVerificationEmail(email, verificationCode);
-        if (!emailSent) {
-            return res.status(500).json({ error: 'Failed to send verification email' });
-        }
+        // Send verification email (non-blocking)
+        sendVerificationEmail(email, verificationCode).catch(err => {
+            console.error('Background email send error:', err);
+        });
 
-        res.json({ message: 'Verification code sent to your email' });
+        // Always return success (email will be sent in background)
+        res.json({ 
+            message: 'Verification code sent to your email',
+            note: 'If you don\'t receive the email, please check your spam folder or try again.'
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -641,6 +780,141 @@ router.post('/resend-password-reset-otp', async (req, res) => {
     } catch (error) {
         console.error('Resend password reset OTP error:', error);
         res.status(500).json({ error: error.message || 'Failed to resend password reset OTP' });
+    }
+});
+
+// Change Password - Request OTP (Authenticated Users)
+router.post('/change-password/request-otp', auth, async (req, res) => {
+    try {
+        // User is already authenticated via auth middleware
+        const user = await User.findById(req.user._id);
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Generate 6-digit OTP for password change
+        const changeOTP = generateVerificationCode();
+        const otpExpiry = new Date();
+        otpExpiry.setMinutes(otpExpiry.getMinutes() + 10); // OTP expires in 10 minutes
+
+        // Save OTP and expiry to user
+        user.passwordChangeOTP = changeOTP;
+        user.passwordChangeOTPExpiry = otpExpiry;
+        await user.save();
+
+        // Send password change OTP email
+        const emailSent = await sendPasswordChangeOTP(user.email, changeOTP, user.name);
+        
+        if (!emailSent) {
+            // Clear OTP if email failed
+            user.passwordChangeOTP = null;
+            user.passwordChangeOTPExpiry = null;
+            await user.save();
+            return res.status(500).json({ error: 'Failed to send password change OTP email. Please try again later.' });
+        }
+
+        res.json({ 
+            message: 'Password change OTP has been sent to your email address.',
+            email: user.email
+        });
+    } catch (error) {
+        console.error('Change password request OTP error:', error);
+        res.status(500).json({ error: error.message || 'Failed to process password change request' });
+    }
+});
+
+// Change Password - Verify OTP and Change Password (Authenticated Users)
+router.post('/change-password', auth, async (req, res) => {
+    try {
+        const { otp, newPassword } = req.body;
+
+        // Validate input
+        if (!otp || !newPassword) {
+            return res.status(400).json({ error: 'OTP and new password are required' });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+        }
+
+        // Get authenticated user
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Check if OTP exists
+        if (!user.passwordChangeOTP) {
+            return res.status(400).json({ error: 'No password change request found. Please request a new OTP.' });
+        }
+
+        // Verify OTP
+        if (user.passwordChangeOTP !== otp) {
+            return res.status(400).json({ error: 'Invalid OTP. Please check and try again.' });
+        }
+
+        // Check if OTP expired
+        if (new Date() > user.passwordChangeOTPExpiry) {
+            // Clear expired OTP
+            user.passwordChangeOTP = null;
+            user.passwordChangeOTPExpiry = null;
+            await user.save();
+            return res.status(400).json({ error: 'OTP has expired. Please request a new password change OTP.' });
+        }
+
+        // Change password
+        user.password = newPassword; // Will be hashed by pre-save hook
+        user.passwordChangeOTP = null;
+        user.passwordChangeOTPExpiry = null;
+        await user.save();
+
+        res.json({ 
+            message: 'Password changed successfully. Please login with your new password.' 
+        });
+    } catch (error) {
+        console.error('Change password error:', error);
+        res.status(500).json({ error: error.message || 'Failed to change password' });
+    }
+});
+
+// Resend Password Change OTP (Authenticated Users)
+router.post('/change-password/resend-otp', auth, async (req, res) => {
+    try {
+        // User is already authenticated via auth middleware
+        const user = await User.findById(req.user._id);
+        
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Generate new OTP
+        const changeOTP = generateVerificationCode();
+        const otpExpiry = new Date();
+        otpExpiry.setMinutes(otpExpiry.getMinutes() + 10);
+
+        // Save new OTP
+        user.passwordChangeOTP = changeOTP;
+        user.passwordChangeOTPExpiry = otpExpiry;
+        await user.save();
+
+        // Send email
+        const emailSent = await sendPasswordChangeOTP(user.email, changeOTP, user.name);
+        
+        if (!emailSent) {
+            user.passwordChangeOTP = null;
+            user.passwordChangeOTPExpiry = null;
+            await user.save();
+            return res.status(500).json({ error: 'Failed to send password change OTP email. Please try again later.' });
+        }
+
+        res.json({ 
+            message: 'Password change OTP has been resent to your email address.',
+            email: user.email
+        });
+    } catch (error) {
+        console.error('Resend password change OTP error:', error);
+        res.status(500).json({ error: error.message || 'Failed to resend password change OTP' });
     }
 });
 

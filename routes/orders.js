@@ -7,13 +7,28 @@ const { auth, adminAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Email transporter configuration
+// Email transporter configuration with timeout and connection settings
 const createTransporter = () => {
     return nodemailer.createTransport({
         service: 'gmail',
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false, // true for 465, false for other ports
         auth: {
             user: process.env.EMAIL_USER || 'your-email@gmail.com',
             pass: process.env.EMAIL_PASSWORD || 'your-app-password'
+        },
+        // Connection timeout settings for Render
+        connectionTimeout: 60000, // 60 seconds
+        greetingTimeout: 30000, // 30 seconds
+        socketTimeout: 60000, // 60 seconds
+        // Retry settings
+        pool: true,
+        maxConnections: 1,
+        maxMessages: 3,
+        // Additional options for better reliability
+        tls: {
+            rejectUnauthorized: false // Allow self-signed certificates if needed
         }
     });
 };
