@@ -190,9 +190,16 @@ const sendVerificationEmail = async (email, code, retries = 3) => {
 
 // Send password reset OTP email with retry logic
 const sendPasswordResetOTP = async (email, code, retries = 2) => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    const smtpConfigs = 3;
+    const totalAttempts = smtpConfigs * (retries + 1);
+    
+    for (let attempt = 0; attempt < totalAttempts; attempt++) {
+        const configIndex = Math.floor(attempt / (retries + 1));
+        const retryIndex = attempt % (retries + 1);
+        let transporter = null;
+        
         try {
-            const transporter = createTransporter();
+            transporter = createTransporter(configIndex);
             const Settings = require('../models/Settings');
             const storeSettings = await Settings.getSettings();
             const storeName = storeSettings.storeName || 'Pujnam Store';
@@ -287,9 +294,16 @@ const sendPasswordResetOTP = async (email, code, retries = 2) => {
 
 // Send password change OTP email with retry logic
 const sendPasswordChangeOTP = async (email, code, userName, retries = 2) => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    const smtpConfigs = 3;
+    const totalAttempts = smtpConfigs * (retries + 1);
+    
+    for (let attempt = 0; attempt < totalAttempts; attempt++) {
+        const configIndex = Math.floor(attempt / (retries + 1));
+        const retryIndex = attempt % (retries + 1);
+        let transporter = null;
+        
         try {
-            const transporter = createTransporter();
+            transporter = createTransporter(configIndex);
             const Settings = require('../models/Settings');
             const storeSettings = await Settings.getSettings();
             const storeName = storeSettings.storeName || 'Pujnam Store';
