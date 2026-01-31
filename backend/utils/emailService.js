@@ -70,12 +70,46 @@ const sendEmail = async (options) => {
         console.log('⚠️ HOSTINGER_EMAIL_USER not set, skipping Hostinger SMTP');
     }
     
+    // Priority 2: Try Resend (if API key is set)
+    if (process.env.RESEND_API_KEY) {
+        try {
+            const { Resend } = require('resend');
+            const resend = new Resend(process.env.RESEND_API_KEY);
+            
+            const fromEmail = from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+            
+            console.log(`📧 Attempting to send email via Resend to ${to} from ${fromEmail}`);
+            
+            const result = await resend.emails.send({
+                from: fromEmail,
+                to: to,
+                subject: subject,
+                html: html
+            });
+            
+            if (result.error) {
+                console.error('❌ Resend API error:', result.error);
+                throw new Error(result.error.message || 'Resend API error');
+            }
+            
+            console.log(`✅ Email sent via Resend to ${to}`, result.data?.id || '');
+            return true;
+        } catch (error) {
+            console.error('❌ Resend error:', error.message || error);
+            console.error('Resend error details:', error);
+            console.log('🔄 Falling back to Gmail SMTP...');
+        }
+    } else {
+        console.log('⚠️ RESEND_API_KEY not set, skipping Resend');
+    }
+    
     // Priority 3: Fallback to Gmail SMTP
     if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
+        let transporter = null;
         try {
             console.log(`📧 Attempting to send email via Gmail SMTP to ${to}`);
             
-            const transporter = nodemailer.createTransport({
+            transporter = nodemailer.createTransport({
                 host: 'smtp.gmail.com',
                 port: 587,
                 secure: false,
@@ -107,10 +141,23 @@ const sendEmail = async (options) => {
             
             const result = await Promise.race([sendPromise, timeoutPromise]);
             console.log(`✅ Email sent via Gmail SMTP to ${to}`, result.messageId || '');
-            transporter.close();
+            
+            if (transporter) {
+                try {
+                    transporter.close();
+                } catch (closeError) {
+                    // Ignore close errors
+                }
+            }
             return true;
         } catch (error) {
-            transporter.close();
+            if (transporter) {
+                try {
+                    transporter.close();
+                } catch (closeError) {
+                    // Ignore close errors
+                }
+            }
             console.error('❌ Gmail SMTP error:', error.message || error);
             console.error('Gmail error details:', error);
             // Don't throw, let it fall through to final error
