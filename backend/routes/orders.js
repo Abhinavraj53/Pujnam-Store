@@ -1,66 +1,13 @@
 const express = require('express');
-const nodemailer = require('nodemailer');
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
 const { auth, adminAuth } = require('../middleware/auth');
+const { sendEmail } = require('../utils/emailService');
 
 const router = express.Router();
 
-// Email transporter configuration with multiple fallback options
-const createTransporter = (attempt = 0) => {
-    const emailUser = process.env.EMAIL_USER;
-    const emailPass = process.env.EMAIL_PASSWORD;
-    
-    if (!emailUser || !emailPass) {
-        console.error('❌ EMAIL_USER or EMAIL_PASSWORD not set in environment variables');
-        throw new Error('Email configuration missing');
-    }
-
-    const configs = [
-        {
-            host: 'smtp.gmail.com',
-            port: 587,
-            secure: false,
-            requireTLS: true,
-            auth: { user: emailUser, pass: emailPass },
-            connectionTimeout: 10000,
-            greetingTimeout: 5000,
-            socketTimeout: 10000,
-            tls: { rejectUnauthorized: false, ciphers: 'SSLv3' }
-        },
-        {
-            host: 'smtp.gmail.com',
-            port: 465,
-            secure: true,
-            auth: { user: emailUser, pass: emailPass },
-            connectionTimeout: 10000,
-            greetingTimeout: 5000,
-            socketTimeout: 10000,
-            tls: { rejectUnauthorized: false }
-        },
-        {
-            host: 'smtp.gmail.com',
-            port: 587,
-            secure: false,
-            auth: { user: emailUser, pass: emailPass },
-            connectionTimeout: 10000,
-            greetingTimeout: 5000,
-            socketTimeout: 10000,
-            tls: { rejectUnauthorized: false, minVersion: 'TLSv1' }
-        }
-    ];
-
-    const config = configs[attempt] || configs[0];
-    return nodemailer.createTransport({
-        ...config,
-        pool: false,
-        debug: process.env.EMAIL_DEBUG === 'true',
-        logger: process.env.EMAIL_DEBUG === 'true'
-    });
-};
-
-// Send order confirmation email
+// Send order confirmation email using email service
 const sendOrderConfirmationEmail = async (order, customerEmail, customerName) => {
     try {
         if (!customerEmail) {
