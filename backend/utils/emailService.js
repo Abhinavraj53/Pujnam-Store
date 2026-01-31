@@ -10,32 +10,45 @@ const sendEmail = async (options) => {
             const { Resend } = require('resend');
             const resend = new Resend(process.env.RESEND_API_KEY);
             
+            const fromEmail = from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+            
+            console.log(`📧 Attempting to send email via Resend to ${to} from ${fromEmail}`);
+            
             const result = await resend.emails.send({
-                from: from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
+                from: fromEmail,
                 to: to,
                 subject: subject,
                 html: html
             });
             
             if (result.error) {
+                console.error('❌ Resend API error:', result.error);
                 throw new Error(result.error.message || 'Resend API error');
             }
             
             console.log(`✅ Email sent via Resend to ${to}`, result.data?.id || '');
             return true;
         } catch (error) {
-            console.error('❌ Resend error:', error.message);
+            console.error('❌ Resend error:', error.message || error);
+            console.error('Resend error details:', error);
             console.log('🔄 Falling back to Hostinger SMTP...');
         }
+    } else {
+        console.log('⚠️ RESEND_API_KEY not set, skipping Resend');
     }
     
     // Priority 2: Try Hostinger SMTP (if configured)
     if (process.env.HOSTINGER_EMAIL_USER && process.env.HOSTINGER_EMAIL_PASSWORD) {
         try {
+            const port = parseInt(process.env.HOSTINGER_SMTP_PORT || '465');
+            const secure = port === 587 ? false : true;
+            
+            console.log(`📧 Attempting to send email via Hostinger SMTP (port ${port}) to ${to}`);
+            
             const transporter = nodemailer.createTransport({
                 host: 'smtp.hostinger.com',
-                port: parseInt(process.env.HOSTINGER_SMTP_PORT || '465'), // Default 465 (SSL), can use 587 (TLS)
-                secure: process.env.HOSTINGER_SMTP_PORT === '587' ? false : true, // true for 465, false for 587
+                port: port,
+                secure: secure,
                 auth: {
                     user: process.env.HOSTINGER_EMAIL_USER,
                     pass: process.env.HOSTINGER_EMAIL_PASSWORD
@@ -65,57 +78,70 @@ const sendEmail = async (options) => {
             transporter.close();
             return true;
         } catch (error) {
-            console.error('❌ Hostinger SMTP error:', error.message);
+            console.error('❌ Hostinger SMTP error:', error.message || error);
+            console.error('Hostinger error details:', error);
             console.log('🔄 Falling back to Gmail SMTP...');
         }
+    } else {
+        console.log('⚠️ HOSTINGER_EMAIL_USER not set, skipping Hostinger SMTP');
     }
     
     // Priority 3: Fallback to Gmail SMTP
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-        throw new Error('No email service configured. Set RESEND_API_KEY, HOSTINGER_EMAIL_USER, or EMAIL_USER/EMAIL_PASSWORD');
-    }
-    
-    // Try Gmail SMTP with quick timeout
-    const transporter = nodemailer.createTransport({
-        host: 'smtp.gmail.com',
-        port: 587,
-        secure: false,
-        requireTLS: true,
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASSWORD
-        },
-        connectionTimeout: 5000, // 5 seconds only
-        greetingTimeout: 3000,
-        socketTimeout: 5000,
-        tls: {
-            rejectUnauthorized: false
+    if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
+        try {
+            console.log(`📧 Attempting to send email via Gmail SMTP to ${to}`);
+            
+            const transporter = nodemailer.createTransport({
+                host: 'smtp.gmail.com',
+                port: 587,
+                secure: false,
+                requireTLS: true,
+                auth: {
+                    user: process.env.EMAIL_USER,
+                    pass: process.env.EMAIL_PASSWORD
+                },
+                connectionTimeout: 5000, // 5 seconds only
+                greetingTimeout: 3000,
+                socketTimeout: 5000,
+                tls: {
+                    rejectUnauthorized: false
+                }
+            });
+            
+            const mailOptions = {
+                from: from || `"Pujnam Store" <${process.env.EMAIL_USER}>`,
+                to: to,
+                subject: subject,
+                html: html
+            };
+            
+            // Quick send with timeout
+            const sendPromise = transporter.sendMail(mailOptions);
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Gmail SMTP timeout')), 10000)
+            );
+            
+            const result = await Promise.race([sendPromise, timeoutPromise]);
+            console.log(`✅ Email sent via Gmail SMTP to ${to}`, result.messageId || '');
+            transporter.close();
+            return true;
+        } catch (error) {
+            transporter.close();
+            console.error('❌ Gmail SMTP error:', error.message || error);
+            console.error('Gmail error details:', error);
+            // Don't throw, let it fall through to final error
         }
-    });
-    
-    try {
-        const mailOptions = {
-            from: from || `"Pujnam Store" <${process.env.EMAIL_USER}>`,
-            to: to,
-            subject: subject,
-            html: html
-        };
-        
-        // Quick send with timeout
-        const sendPromise = transporter.sendMail(mailOptions);
-        const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Gmail SMTP timeout')), 10000)
-        );
-        
-        const result = await Promise.race([sendPromise, timeoutPromise]);
-        console.log(`✅ Email sent via Gmail SMTP to ${to}`, result.messageId || '');
-        transporter.close();
-        return true;
-    } catch (error) {
-        transporter.close();
-        console.error('❌ Gmail SMTP error:', error.message);
-        throw error;
     }
+    
+    // If all services failed
+    const errorMessage = 'All email services failed. Check RESEND_API_KEY, HOSTINGER_EMAIL_USER, or EMAIL_USER/EMAIL_PASSWORD';
+    console.error('❌', errorMessage);
+    console.error('Available env vars:', {
+        hasResendKey: !!process.env.RESEND_API_KEY,
+        hasHostingerUser: !!process.env.HOSTINGER_EMAIL_USER,
+        hasGmailUser: !!process.env.EMAIL_USER
+    });
+    throw new Error(errorMessage);
 };
 
 module.exports = { sendEmail };

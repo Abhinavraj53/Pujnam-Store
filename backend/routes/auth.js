@@ -12,33 +12,36 @@ const generateVerificationCode = () => {
     return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Send verification email using email service (Resend or Gmail)
+// Send verification email using email service (Resend, Hostinger, or Gmail)
 const sendVerificationEmail = async (email, code) => {
     try {
         const html = `
-            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                <h2 style="color: #FF8C00;">Email Verification</h2>
-                <p>Thank you for registering with Pujnam Store!</p>
-                <p>Your verification code is:</p>
-                <div style="background-color: #f3f4f6; padding: 20px; text-align: center; margin: 20px 0;">
-                    <h1 style="color: #FF8C00; font-size: 32px; margin: 0; letter-spacing: 5px;">${code}</h1>
-                </div>
-                <p>This code will expire in 10 minutes.</p>
-                <p>If you didn't create an account, please ignore this email.</p>
-                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-                <p style="color: #6b7280; font-size: 12px;">© Pujnam Store - Your Trusted Puja Store</p>
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h2 style="color: #FF8C00;">Email Verification</h2>
+                    <p>Thank you for registering with Pujnam Store!</p>
+                    <p>Your verification code is:</p>
+                    <div style="background-color: #f3f4f6; padding: 20px; text-align: center; margin: 20px 0;">
+                        <h1 style="color: #FF8C00; font-size: 32px; margin: 0; letter-spacing: 5px;">${code}</h1>
+                    </div>
+                    <p>This code will expire in 10 minutes.</p>
+                    <p>If you didn't create an account, please ignore this email.</p>
+                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+                    <p style="color: #6b7280; font-size: 12px;">© Pujnam Store - Your Trusted Puja Store</p>
             </div>
         `;
         
+        console.log(`📧 Sending verification email to ${email}`);
         await sendEmail({
             to: email,
             subject: 'Email Verification Code - Pujnam Store',
             html: html
         });
         
+        console.log(`✅ Verification email sent successfully to ${email}`);
         return true;
     } catch (error) {
         console.error(`❌ Failed to send verification email to ${email}:`, error.message);
+        console.error('Full error:', error);
         return false;
     }
 };
@@ -93,9 +96,9 @@ const sendPasswordResetOTP = async (email, code, retries = 2) => {
                                 This is an automated email, please do not reply.
                             </p>
                         </div>
-                    </div>
-                `
-            };
+                </div>
+            `
+        };
             
             // Skip verification (often fails on Render but send works)
             if (attempt === 0) {
