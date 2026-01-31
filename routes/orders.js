@@ -84,8 +84,7 @@ const sendOrderConfirmationEmail = async (order, customerEmail, customerName) =>
             </tr>
         `).join('');
 
-        const mailOptions = {
-            from: process.env.EMAIL_USER || storeEmail,
+        const html = `,
             to: customerEmail,
             subject: `Order Confirmation - Order #${order._id.toString().slice(-8)} - ${storeName}`,
             html: `
