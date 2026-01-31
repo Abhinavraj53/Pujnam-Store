@@ -1,43 +1,10 @@
 const nodemailer = require('nodemailer');
 
-// Email service using Resend (recommended), Hostinger SMTP, or Gmail SMTP (fallback)
+// Email service using Hostinger SMTP (primary), Resend, or Gmail SMTP (fallback)
 const sendEmail = async (options) => {
     const { to, subject, html, from } = options;
     
-    // Priority 1: Try Resend first (if API key is set)
-    if (process.env.RESEND_API_KEY) {
-        try {
-            const { Resend } = require('resend');
-            const resend = new Resend(process.env.RESEND_API_KEY);
-            
-            const fromEmail = from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
-            
-            console.log(`📧 Attempting to send email via Resend to ${to} from ${fromEmail}`);
-            
-            const result = await resend.emails.send({
-                from: fromEmail,
-                to: to,
-                subject: subject,
-                html: html
-            });
-            
-            if (result.error) {
-                console.error('❌ Resend API error:', result.error);
-                throw new Error(result.error.message || 'Resend API error');
-            }
-            
-            console.log(`✅ Email sent via Resend to ${to}`, result.data?.id || '');
-            return true;
-        } catch (error) {
-            console.error('❌ Resend error:', error.message || error);
-            console.error('Resend error details:', error);
-            console.log('🔄 Falling back to Hostinger SMTP...');
-        }
-    } else {
-        console.log('⚠️ RESEND_API_KEY not set, skipping Resend');
-    }
-    
-    // Priority 2: Try Hostinger SMTP (if configured)
+    // Priority 1: Try Hostinger SMTP first (if configured)
     if (process.env.HOSTINGER_EMAIL_USER && process.env.HOSTINGER_EMAIL_PASSWORD) {
         try {
             const port = parseInt(process.env.HOSTINGER_SMTP_PORT || '465');
@@ -134,11 +101,12 @@ const sendEmail = async (options) => {
     }
     
     // If all services failed
-    const errorMessage = 'All email services failed. Check RESEND_API_KEY, HOSTINGER_EMAIL_USER, or EMAIL_USER/EMAIL_PASSWORD';
+    const errorMessage = 'All email services failed. Check HOSTINGER_EMAIL_USER, RESEND_API_KEY, or EMAIL_USER/EMAIL_PASSWORD';
     console.error('❌', errorMessage);
     console.error('Available env vars:', {
-        hasResendKey: !!process.env.RESEND_API_KEY,
         hasHostingerUser: !!process.env.HOSTINGER_EMAIL_USER,
+        hasHostingerPass: !!process.env.HOSTINGER_EMAIL_PASSWORD,
+        hasResendKey: !!process.env.RESEND_API_KEY,
         hasGmailUser: !!process.env.EMAIL_USER
     });
     throw new Error(errorMessage);
