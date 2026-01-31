@@ -6,13 +6,14 @@ const sendEmail = async (options) => {
     
     // Priority 1: Try Hostinger SMTP first (if configured)
     if (process.env.HOSTINGER_EMAIL_USER && process.env.HOSTINGER_EMAIL_PASSWORD) {
+        let transporter = null;
         try {
             const port = parseInt(process.env.HOSTINGER_SMTP_PORT || '465');
             const secure = port === 587 ? false : true;
             
             console.log(`📧 Attempting to send email via Hostinger SMTP (port ${port}) to ${to}`);
             
-            const transporter = nodemailer.createTransport({
+            transporter = nodemailer.createTransport({
                 host: 'smtp.hostinger.com',
                 port: port,
                 secure: secure,
@@ -42,12 +43,28 @@ const sendEmail = async (options) => {
             
             const result = await Promise.race([sendPromise, timeoutPromise]);
             console.log(`✅ Email sent via Hostinger SMTP to ${to}`, result.messageId || '');
-            transporter.close();
+            
+            if (transporter) {
+                try {
+                    transporter.close();
+                } catch (closeError) {
+                    // Ignore close errors
+                }
+            }
             return true;
         } catch (error) {
             console.error('❌ Hostinger SMTP error:', error.message || error);
             console.error('Hostinger error details:', error);
-            console.log('🔄 Falling back to Gmail SMTP...');
+            
+            if (transporter) {
+                try {
+                    transporter.close();
+                } catch (closeError) {
+                    // Ignore close errors
+                }
+            }
+            
+            console.log('🔄 Falling back to Resend...');
         }
     } else {
         console.log('⚠️ HOSTINGER_EMAIL_USER not set, skipping Hostinger SMTP');
