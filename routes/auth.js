@@ -250,10 +250,16 @@ router.post('/register', async (req, res) => {
     try {
         const { email, password, name, phone } = req.body;
 
-        // Check if user already exists (verified account)
+        // Check if user already exists (verified or unverified account)
         const existingUser = await User.findOne({ email });
         if (existingUser) {
-            return res.status(400).json({ error: 'Email already registered' });
+            if (existingUser.emailVerified) {
+                return res.status(400).json({ error: 'Email already registered. Please login instead.' });
+            } else {
+                // Unverified account exists - delete it (user needs to register again and verify)
+                await User.deleteOne({ email });
+                console.log(`Deleted unverified account: ${email}`);
+            }
         }
 
         // Check if there's already a pending registration for this email
@@ -718,15 +724,26 @@ router.post('/forgot-password', async (req, res) => {
             return res.status(400).json({ error: 'Email is required' });
         }
 
-        // Find user by email
-        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        // Find user by email (only verified users can reset password)
+        const user = await User.findOne({ 
+            email: email.toLowerCase().trim(),
+            emailVerified: true // Only allow password reset for verified accounts
+        });
         
-        // For security, don't reveal if email exists or not
-        // Always return success message
+        // Check if account exists - show error if not found
         if (!user) {
-            // Still return success to prevent email enumeration
-            return res.json({ 
-                message: 'If an account exists with this email, a password reset OTP has been sent.' 
+            // Also check if there's a pending registration
+            const pendingRegistration = await PendingRegistration.findOne({ email: email.toLowerCase().trim() });
+            
+            if (pendingRegistration) {
+                return res.status(400).json({ 
+                    error: 'Account not verified yet. Please verify your email first to complete registration.' 
+                });
+            }
+            
+            // No account found
+            return res.status(404).json({ 
+                error: 'No account found with this email address. Please check your email or register a new account.' 
             });
         }
 
@@ -752,8 +769,8 @@ router.post('/forgot-password', async (req, res) => {
         }
 
         res.json({ 
-            message: 'If an account exists with this email, a password reset OTP has been sent.',
-            email: user.email // Only return if email was sent successfully
+            message: 'Password reset OTP has been sent to your email address.',
+            email: user.email
         });
     } catch (error) {
         console.error('Forgot password error:', error);
