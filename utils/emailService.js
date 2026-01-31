@@ -6,65 +6,77 @@ const sendEmail = async (options) => {
     
     // Priority 1: Try Hostinger SMTP first (if configured)
     if (process.env.HOSTINGER_EMAIL_USER && process.env.HOSTINGER_EMAIL_PASSWORD) {
-        let transporter = null;
-        try {
-            const port = parseInt(process.env.HOSTINGER_SMTP_PORT || '465');
-            const secure = port === 587 ? false : true;
-            
-            console.log(`📧 Attempting to send email via Hostinger SMTP (port ${port}) to ${to}`);
-            
-            transporter = nodemailer.createTransport({
-                host: 'smtp.hostinger.com',
-                port: port,
-                secure: secure,
-                auth: {
-                    user: process.env.HOSTINGER_EMAIL_USER,
-                    pass: process.env.HOSTINGER_EMAIL_PASSWORD
-                },
-                connectionTimeout: 15000, // 15 seconds
-                greetingTimeout: 5000,
-                socketTimeout: 15000,
-                tls: {
-                    rejectUnauthorized: false
+        // Try both ports: 587 (TLS) first, then 465 (SSL)
+        const portsToTry = process.env.HOSTINGER_SMTP_PORT ? [parseInt(process.env.HOSTINGER_SMTP_PORT)] : [587, 465];
+        
+        for (const port of portsToTry) {
+            let transporter = null;
+            try {
+                const secure = port === 587 ? false : true;
+                
+                console.log(`📧 Attempting to send email via Hostinger SMTP (port ${port}, secure: ${secure}) to ${to}`);
+                
+                transporter = nodemailer.createTransport({
+                    host: 'smtp.hostinger.com',
+                    port: port,
+                    secure: secure,
+                    requireTLS: port === 587, // Require TLS for port 587
+                    auth: {
+                        user: process.env.HOSTINGER_EMAIL_USER,
+                        pass: process.env.HOSTINGER_EMAIL_PASSWORD
+                    },
+                    connectionTimeout: 20000, // 20 seconds (increased)
+                    greetingTimeout: 10000, // 10 seconds (increased)
+                    socketTimeout: 20000, // 20 seconds (increased)
+                    tls: {
+                        rejectUnauthorized: false,
+                        minVersion: 'TLSv1'
+                    }
+                });
+                
+                const mailOptions = {
+                    from: from || `"Pujnam Store" <${process.env.HOSTINGER_EMAIL_USER}>`,
+                    to: to,
+                    subject: subject,
+                    html: html
+                };
+                
+                // Try to send with longer timeout
+                const sendPromise = transporter.sendMail(mailOptions);
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error(`Hostinger SMTP timeout (port ${port})`)), 25000)
+                );
+                
+                const result = await Promise.race([sendPromise, timeoutPromise]);
+                console.log(`✅ Email sent via Hostinger SMTP (port ${port}) to ${to}`, result.messageId || '');
+                
+                if (transporter) {
+                    try {
+                        transporter.close();
+                    } catch (closeError) {
+                        // Ignore close errors
+                    }
                 }
-            });
-            
-            const mailOptions = {
-                from: from || `"Pujnam Store" <${process.env.HOSTINGER_EMAIL_USER}>`,
-                to: to,
-                subject: subject,
-                html: html
-            };
-            
-            const sendPromise = transporter.sendMail(mailOptions);
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Hostinger SMTP timeout')), 20000)
-            );
-            
-            const result = await Promise.race([sendPromise, timeoutPromise]);
-            console.log(`✅ Email sent via Hostinger SMTP to ${to}`, result.messageId || '');
-            
-            if (transporter) {
-                try {
-                    transporter.close();
-                } catch (closeError) {
-                    // Ignore close errors
+                return true;
+            } catch (error) {
+                console.error(`❌ Hostinger SMTP error (port ${port}):`, error.message || error);
+                
+                if (transporter) {
+                    try {
+                        transporter.close();
+                    } catch (closeError) {
+                        // Ignore close errors
+                    }
+                }
+                
+                // If this is not the last port, try next port
+                if (port !== portsToTry[portsToTry.length - 1]) {
+                    console.log(`🔄 Trying next port...`);
+                    continue;
+                } else {
+                    console.log('🔄 All Hostinger ports failed, falling back to Resend...');
                 }
             }
-            return true;
-        } catch (error) {
-            console.error('❌ Hostinger SMTP error:', error.message || error);
-            console.error('Hostinger error details:', error);
-            
-            if (transporter) {
-                try {
-                    transporter.close();
-                } catch (closeError) {
-                    // Ignore close errors
-                }
-            }
-            
-            console.log('🔄 Falling back to Resend...');
         }
     } else {
         console.log('⚠️ HOSTINGER_EMAIL_USER not set, skipping Hostinger SMTP');
