@@ -9,27 +9,38 @@ const router = express.Router();
 
 // Email transporter configuration with timeout and connection settings
 const createTransporter = () => {
+    const emailUser = process.env.EMAIL_USER;
+    const emailPass = process.env.EMAIL_PASSWORD;
+    
+    if (!emailUser || !emailPass) {
+        console.error('❌ EMAIL_USER or EMAIL_PASSWORD not set in environment variables');
+        throw new Error('Email configuration missing');
+    }
+
+    const useSSL = process.env.EMAIL_USE_SSL !== 'false'; // Default to SSL
+    
     return nodemailer.createTransport({
         service: 'gmail',
         host: 'smtp.gmail.com',
-        port: 587,
-        secure: false, // true for 465, false for other ports
+        port: useSSL ? 465 : 587,
+        secure: useSSL, // true for 465, false for 587
         auth: {
-            user: process.env.EMAIL_USER || 'your-email@gmail.com',
-            pass: process.env.EMAIL_PASSWORD || 'your-app-password'
+            user: emailUser,
+            pass: emailPass
         },
-        // Connection timeout settings for Render
-        connectionTimeout: 60000, // 60 seconds
-        greetingTimeout: 30000, // 30 seconds
-        socketTimeout: 60000, // 60 seconds
+        // Connection timeout settings for Render (reduced for faster failure)
+        connectionTimeout: 20000, // 20 seconds
+        greetingTimeout: 10000, // 10 seconds
+        socketTimeout: 20000, // 20 seconds
         // Retry settings
-        pool: true,
-        maxConnections: 1,
-        maxMessages: 3,
+        pool: false, // Disable pooling for better reliability
         // Additional options for better reliability
         tls: {
-            rejectUnauthorized: false // Allow self-signed certificates if needed
-        }
+            rejectUnauthorized: false,
+            ciphers: 'SSLv3'
+        },
+        debug: process.env.EMAIL_DEBUG === 'true',
+        logger: process.env.EMAIL_DEBUG === 'true'
     });
 };
 
