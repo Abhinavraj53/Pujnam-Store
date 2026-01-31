@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const PendingRegistration = require('../models/PendingRegistration');
 const { auth } = require('../middleware/auth');
-const nodemailer = require('nodemailer');
+const { sendEmail } = require('../utils/emailService');
 
 const router = express.Router();
 
@@ -88,104 +88,35 @@ const createTransporter = (attempt = 0) => {
     });
 };
 
-// Send verification email with retry logic and better error handling
-const sendVerificationEmail = async (email, code, retries = 3) => {
-    // Try different SMTP configs (3 configs × retries)
-    const smtpConfigs = 3;
-    const totalAttempts = smtpConfigs * (retries + 1);
-    
-    for (let attempt = 0; attempt < totalAttempts; attempt++) {
-        let transporter = null;
-        const configIndex = Math.floor(attempt / (retries + 1));
-        const retryIndex = attempt % (retries + 1);
+// Send verification email using email service (Resend or Gmail)
+const sendVerificationEmail = async (email, code) => {
+    try {
+        const html = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #FF8C00;">Email Verification</h2>
+                <p>Thank you for registering with Pujnam Store!</p>
+                <p>Your verification code is:</p>
+                <div style="background-color: #f3f4f6; padding: 20px; text-align: center; margin: 20px 0;">
+                    <h1 style="color: #FF8C00; font-size: 32px; margin: 0; letter-spacing: 5px;">${code}</h1>
+                </div>
+                <p>This code will expire in 10 minutes.</p>
+                <p>If you didn't create an account, please ignore this email.</p>
+                <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+                <p style="color: #6b7280; font-size: 12px;">© Pujnam Store - Your Trusted Puja Store</p>
+            </div>
+        `;
         
-        try {
-            // Create new transporter with different config for each attempt
-            transporter = createTransporter(configIndex);
-            
-            // Skip verification on Render (it often times out but send works)
-            // Only verify on first attempt of first config
-            if (attempt === 0) {
-                try {
-                    // Quick verification with timeout
-                    const verifyPromise = transporter.verify();
-                    const verifyTimeout = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Verify timeout')), 5000)
-                    );
-                    await Promise.race([verifyPromise, verifyTimeout]);
-                    console.log(`✅ SMTP connection verified for ${email}`);
-                } catch (verifyError) {
-                    console.log(`⚠️ SMTP verification skipped (will try sending anyway):`, verifyError.message);
-                    // Continue - verification often fails on Render but sending works
-                }
-            }
-            
-            const mailOptions = {
-                from: `"Pujnam Store" <${process.env.EMAIL_USER}>`,
-                to: email,
-                subject: 'Email Verification Code - Pujnam Store',
-                html: `
-                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-                        <h2 style="color: #FF8C00;">Email Verification</h2>
-                        <p>Thank you for registering with Pujnam Store!</p>
-                        <p>Your verification code is:</p>
-                        <div style="background-color: #f3f4f6; padding: 20px; text-align: center; margin: 20px 0;">
-                            <h1 style="color: #FF8C00; font-size: 32px; margin: 0; letter-spacing: 5px;">${code}</h1>
-                        </div>
-                        <p>This code will expire in 10 minutes.</p>
-                        <p>If you didn't create an account, please ignore this email.</p>
-                        <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
-                        <p style="color: #6b7280; font-size: 12px;">© Pujnam Store - Your Trusted Puja Store</p>
-                    </div>
-                `
-            };
-            
-            // Set timeout for sendMail (increased to 25 seconds for Render)
-            const sendPromise = transporter.sendMail(mailOptions);
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Email send timeout after 25 seconds')), 25000)
-            );
-            
-            const result = await Promise.race([sendPromise, timeoutPromise]);
-            console.log(`✅ Verification email sent to ${email} (config ${configIndex + 1}, attempt ${retryIndex + 1})`, result.messageId || '');
-            
-            // Close transporter
-            try {
-                transporter.close();
-            } catch (closeError) {
-                // Ignore close errors
-            }
-            return true;
-        } catch (error) {
-            console.error(`❌ Email sending error (config ${configIndex + 1}, attempt ${retryIndex + 1}/${totalAttempts}):`, {
-                message: error.message,
-                code: error.code,
-                command: error.command
-            });
-            
-            // Close transporter on error
-            if (transporter) {
-                try {
-                    transporter.close();
-                } catch (closeError) {
-                    // Ignore close errors
-                }
-            }
-            
-            // If it's the last attempt, return false
-            if (attempt === totalAttempts - 1) {
-                console.error(`❌ Failed to send verification email to ${email} after ${totalAttempts} attempts with ${smtpConfigs} different SMTP configs`);
-                console.error('💡 Suggestion: Gmail SMTP may be blocked on Render. Consider using SendGrid, Mailgun, or Resend.');
-                return false;
-            }
-            
-            // Wait before retry (shorter wait times)
-            const waitTime = 1000 * (retryIndex + 1); // 1s, 2s, 3s
-            console.log(`⏳ Waiting ${waitTime}ms before retry (config ${configIndex + 1})...`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-        }
+        await sendEmail({
+            to: email,
+            subject: 'Email Verification Code - Pujnam Store',
+            html: html
+        });
+        
+        return true;
+    } catch (error) {
+        console.error(`❌ Failed to send verification email to ${email}:`, error.message);
+        return false;
     }
-    return false;
 };
 
 // Send password reset OTP email with retry logic
@@ -292,122 +223,71 @@ const sendPasswordResetOTP = async (email, code, retries = 2) => {
     return false;
 };
 
-// Send password change OTP email with retry logic
-const sendPasswordChangeOTP = async (email, code, userName, retries = 2) => {
-    const smtpConfigs = 3;
-    const totalAttempts = smtpConfigs * (retries + 1);
-    
-    for (let attempt = 0; attempt < totalAttempts; attempt++) {
-        const configIndex = Math.floor(attempt / (retries + 1));
-        const retryIndex = attempt % (retries + 1);
-        let transporter = null;
+// Send password change OTP email using email service
+const sendPasswordChangeOTP = async (email, code, userName) => {
+    try {
+        const Settings = require('../models/Settings');
+        const storeSettings = await Settings.getSettings();
+        const storeName = storeSettings.storeName || 'Pujnam Store';
         
-        try {
-            transporter = createTransporter(configIndex);
-            const Settings = require('../models/Settings');
-            const storeSettings = await Settings.getSettings();
-            const storeName = storeSettings.storeName || 'Pujnam Store';
-            
-            const mailOptions = {
-                from: process.env.EMAIL_USER || 'noreply@pujnamstore.com',
-                to: email,
-                subject: `Password Change OTP - ${storeName}`,
-                html: `
-                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-                        <div style="background: linear-gradient(135deg, #FF8C00 0%, #FF6B00 100%); padding: 30px; text-align: center;">
-                            <h1 style="color: #ffffff; margin: 0; font-size: 28px;">${storeName}</h1>
-                            <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 14px;">AAPKI AASTHA KA SAARTHI</p>
-                        </div>
-                        
-                        <div style="padding: 30px;">
-                            <h2 style="color: #FF8C00; margin-top: 0;">Password Change Request</h2>
-                            <p>Dear ${userName || 'Valued Customer'},</p>
-                            <p>We received a request to change the password for your ${storeName} account.</p>
-                            <p>Use the following OTP to change your password:</p>
-                            
-                            <div style="background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%); padding: 25px; text-align: center; margin: 20px 0; border-radius: 8px; border: 2px solid #FF8C00;">
-                                <h1 style="color: #FF8C00; font-size: 42px; margin: 0; letter-spacing: 10px; font-weight: bold; text-shadow: 2px 2px 4px rgba(0,0,0,0.1);">${code}</h1>
-                            </div>
-                            
-                            <p style="color: #dc2626; font-weight: bold; text-align: center;">⚠️ This OTP will expire in 10 minutes.</p>
-                            
-                            <div style="background-color: #dbeafe; border-left: 4px solid #3b82f6; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                                <p style="margin: 0; color: #1e40af;"><strong>🔒 Security Information:</strong></p>
-                                <ul style="margin: 10px 0 0 0; padding-left: 20px; color: #1e40af;">
-                                    <li>This OTP is valid for 10 minutes only</li>
-                                    <li>Do not share this OTP with anyone</li>
-                                    <li>${storeName} staff will never ask for your OTP</li>
-                                    <li>If you didn't request this, please secure your account immediately</li>
-                                </ul>
-                            </div>
-                            
-                            <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
-                                <p style="margin: 0; color: #92400e;"><strong>⚠️ Important:</strong> If you didn't request this password change, please ignore this email and consider changing your account password immediately for security.</p>
-                            </div>
-                            
-                            <p style="text-align: center; margin-top: 30px;">
-                                <a href="#" style="background-color: #FF8C00; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold;">Change Password</a>
-                            </p>
-                            
-                            <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
-                            <p style="color: #6b7280; font-size: 12px; text-align: center;">
-                                © ${new Date().getFullYear()} ${storeName} - Your Trusted Puja Store<br>
-                                This is an automated email, please do not reply.<br>
-                                For support, contact: ${storeSettings.storeEmail || 'support@pujnamstore.com'}
-                            </p>
-                        </div>
+        const html = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+                <div style="background: linear-gradient(135deg, #FF8C00 0%, #FF6B00 100%); padding: 30px; text-align: center;">
+                    <h1 style="color: #ffffff; margin: 0; font-size: 28px;">${storeName}</h1>
+                    <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 14px;">AAPKI AASTHA KA SAARTHI</p>
+                </div>
+                
+                <div style="padding: 30px;">
+                    <h2 style="color: #FF8C00; margin-top: 0;">Password Change Request</h2>
+                    <p>Dear ${userName || 'Valued Customer'},</p>
+                    <p>We received a request to change the password for your ${storeName} account.</p>
+                    <p>Use the following OTP to change your password:</p>
+                    
+                    <div style="background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%); padding: 25px; text-align: center; margin: 20px 0; border-radius: 8px; border: 2px solid #FF8C00;">
+                        <h1 style="color: #FF8C00; font-size: 42px; margin: 0; letter-spacing: 10px; font-weight: bold; text-shadow: 2px 2px 4px rgba(0,0,0,0.1);">${code}</h1>
                     </div>
-                `
-            };
-            
-            // Skip verification (often fails on Render but send works)
-            if (attempt === 0) {
-                try {
-                    const verifyPromise = transporter.verify();
-                    const verifyTimeout = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Verify timeout')), 5000)
-                    );
-                    await Promise.race([verifyPromise, verifyTimeout]);
-                } catch (verifyError) {
-                    // Continue anyway
-                }
-            }
-            
-            // Set timeout for sendMail (increased to 25 seconds)
-            const sendPromise = transporter.sendMail(mailOptions);
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Email send timeout after 25 seconds')), 25000)
-            );
-            
-            const result = await Promise.race([sendPromise, timeoutPromise]);
-            console.log(`✅ Password change OTP sent to ${email} (config ${configIndex + 1}, attempt ${retryIndex + 1})`, result.messageId || '');
-            
-            try {
-                transporter.close();
-            } catch (closeError) {}
-            return true;
-        } catch (error) {
-            console.error(`❌ Password change email error (config ${configIndex + 1}, attempt ${retryIndex + 1}/${totalAttempts}):`, {
-                message: error.message,
-                code: error.code
-            });
-            
-            if (transporter) {
-                try {
-                    transporter.close();
-                } catch (closeError) {}
-            }
-            
-            if (attempt === totalAttempts - 1) {
-                console.error(`❌ Failed to send password change OTP to ${email} after ${totalAttempts} attempts`);
-                return false;
-            }
-            
-            const waitTime = 1000 * (retryIndex + 1);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-        }
+                    
+                    <p style="color: #dc2626; font-weight: bold; text-align: center;">⚠️ This OTP will expire in 10 minutes.</p>
+                    
+                    <div style="background-color: #dbeafe; border-left: 4px solid #3b82f6; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                        <p style="margin: 0; color: #1e40af;"><strong>🔒 Security Information:</strong></p>
+                        <ul style="margin: 10px 0 0 0; padding-left: 20px; color: #1e40af;">
+                            <li>This OTP is valid for 10 minutes only</li>
+                            <li>Do not share this OTP with anyone</li>
+                            <li>${storeName} staff will never ask for your OTP</li>
+                            <li>If you didn't request this, please secure your account immediately</li>
+                        </ul>
+                    </div>
+                    
+                    <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                        <p style="margin: 0; color: #92400e;"><strong>⚠️ Important:</strong> If you didn't request this password change, please ignore this email and consider changing your account password immediately for security.</p>
+                    </div>
+                    
+                    <p style="text-align: center; margin-top: 30px;">
+                        <a href="#" style="background-color: #FF8C00; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; display: inline-block; font-weight: bold;">Change Password</a>
+                    </p>
+                    
+                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
+                    <p style="color: #6b7280; font-size: 12px; text-align: center;">
+                        © ${new Date().getFullYear()} ${storeName} - Your Trusted Puja Store<br>
+                        This is an automated email, please do not reply.<br>
+                        For support, contact: ${storeSettings.storeEmail || 'support@pujnamstore.com'}
+                    </p>
+                </div>
+            </div>
+        `;
+        
+        await sendEmail({
+            to: email,
+            subject: `Password Change OTP - ${storeName}`,
+            html: html
+        });
+        
+        return true;
+    } catch (error) {
+        console.error(`❌ Failed to send password change OTP to ${email}:`, error.message);
+        return false;
     }
-    return false;
 };
 
 // Register - Store in pending registration, account will be created only after OTP verification

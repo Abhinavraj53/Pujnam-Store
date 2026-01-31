@@ -3,12 +3,12 @@
     "version": "1.0.0",
     "description": "Backend API for Pujnam Store",
     "main": "server.js",
-  "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
-    "seed": "node seed.js",
-    "cleanup-unverified": "node cleanupUnverifiedUsers.js"
-  },
+    "scripts": {
+        "start": "node server.js",
+        "dev": "nodemon server.js",
+        "seed": "node seed.js",
+        "cleanup-unverified": "node cleanupUnverifiedUsers.js"
+    },
     "dependencies": {
         "bcryptjs": "^2.4.3",
         "cloudinary": "^2.9.0",
@@ -18,7 +18,8 @@
         "jsonwebtoken": "^9.0.2",
         "mongoose": "^8.0.0",
         "multer": "^2.0.2",
-        "nodemailer": "^7.0.12"
+        "nodemailer": "^7.0.12",
+        "resend": "^6.9.1"
     },
     "devDependencies": {
         "nodemon": "^3.0.2"
