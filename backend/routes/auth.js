@@ -258,15 +258,20 @@ router.post('/register', async (req, res) => {
         await pendingRegistration.save();
 
         // Send verification email
+        console.log(`📧 Attempting to send verification email to ${email}`);
         const emailSent = await sendVerificationEmail(email, verificationCode);
         
         if (!emailSent) {
             // If email fails, delete pending registration
             await PendingRegistration.deleteOne({ email });
+            console.error(`❌ Registration failed for ${email} - email sending failed`);
             return res.status(500).json({ 
-                error: 'Failed to send verification email. Please try again.' 
+                error: 'Failed to send verification email. Please check your email service configuration and try again.',
+                details: process.env.NODE_ENV === 'development' ? 'Check server logs for detailed error information' : undefined
             });
         }
+        
+        console.log(`✅ Verification email sent successfully to ${email}`);
 
         res.status(201).json({
             message: 'Verification code sent to your email. Please verify to complete registration.',
