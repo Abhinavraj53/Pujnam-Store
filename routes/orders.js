@@ -84,10 +84,7 @@ const sendOrderConfirmationEmail = async (order, customerEmail, customerName) =>
             </tr>
         `).join('');
 
-        const html = `,
-            to: customerEmail,
-            subject: `Order Confirmation - Order #${order._id.toString().slice(-8)} - ${storeName}`,
-            html: `
+        const html = `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
                     <div style="background: linear-gradient(135deg, #FF8C00 0%, #FF6B00 100%); padding: 30px; text-align: center;">
                         <h1 style="color: #ffffff; margin: 0; font-size: 28px;">${storeName}</h1>
@@ -168,43 +165,19 @@ const sendOrderConfirmationEmail = async (order, customerEmail, customerName) =>
                         </p>
                     </div>
                 </div>
-            `
-        };
+        `;
 
-        // Verify connection first
-        try {
-            await transporter.verify();
-        } catch (verifyError) {
-            console.error(`❌ SMTP verification failed:`, verifyError.message);
-        }
-        
-        // Set timeout for sendMail (reduced to 15 seconds)
-        const sendPromise = transporter.sendMail(mailOptions);
-        const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000)
-        );
-        
-        const result = await Promise.race([sendPromise, timeoutPromise]);
-        console.log(`✅ Order confirmation email sent to ${customerEmail} for order #${order._id}`, result.messageId || '');
-        
-        // Close transporter
-        transporter.close();
-        return true;
-    } catch (error) {
-        console.error('❌ Error sending order confirmation email:', {
-            message: error.message,
-            code: error.code,
-            command: error.command
+        await sendEmail({
+            to: customerEmail,
+            subject: `Order Confirmation - Order #${order._id.toString().slice(-8)} - ${storeName}`,
+            html: html,
+            from: storeEmail
         });
         
-        // Close transporter on error
-        if (transporter) {
-            try {
-                transporter.close();
-            } catch (closeError) {
-                // Ignore close errors
-            }
-        }
+        console.log(`✅ Order confirmation email sent to ${customerEmail} for order #${order._id}`);
+        return true;
+    } catch (error) {
+        console.error('❌ Error sending order confirmation email:', error.message);
         return false;
     }
 };
