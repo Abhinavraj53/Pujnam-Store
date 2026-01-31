@@ -1,6 +1,7 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const PendingRegistration = require('../models/PendingRegistration');
 const { auth } = require('../middleware/auth');
 const nodemailer = require('nodemailer');
 
@@ -244,15 +245,22 @@ const sendPasswordChangeOTP = async (email, code, userName, retries = 2) => {
     return false;
 };
 
-// Register (without email verification - verification code will be sent)
+// Register - Store in pending registration, account will be created only after OTP verification
 router.post('/register', async (req, res) => {
     try {
         const { email, password, name, phone } = req.body;
 
-        // Check if user exists
+        // Check if user already exists (verified account)
         const existingUser = await User.findOne({ email });
         if (existingUser) {
             return res.status(400).json({ error: 'Email already registered' });
+        }
+
+        // Check if there's already a pending registration for this email
+        const existingPending = await PendingRegistration.findOne({ email });
+        if (existingPending) {
+            // Delete old pending registration
+            await PendingRegistration.deleteOne({ email });
         }
 
         // Generate verification code
@@ -260,47 +268,65 @@ router.post('/register', async (req, res) => {
         const codeExpiry = new Date();
         codeExpiry.setMinutes(codeExpiry.getMinutes() + 10); // Code expires in 10 minutes
 
-        // Create new user (not verified yet)
-        const user = new User({ 
+        // Store registration data in pending registration (NOT in User collection)
+        const pendingRegistration = new PendingRegistration({ 
             email, 
             password, 
             name, 
             phone,
-            emailVerified: false,
             emailVerificationCode: verificationCode,
             emailVerificationCodeExpiry: codeExpiry
         });
-        await user.save();
+        await pendingRegistration.save();
 
-        // Send verification email (non-blocking - don't fail registration if email fails)
-        sendVerificationEmail(email, verificationCode).catch(err => {
-            console.error('Background email send error:', err);
-        });
+        // Send verification email
+        const emailSent = await sendVerificationEmail(email, verificationCode);
+        
+        if (!emailSent) {
+            // If email fails, delete pending registration
+            await PendingRegistration.deleteOne({ email });
+            return res.status(500).json({ 
+                error: 'Failed to send verification email. Please try again.' 
+            });
+        }
 
-        // Always return success even if email fails (email will be sent in background)
         res.status(201).json({
-            message: 'Registration successful. Please verify your email.',
+            message: 'Verification code sent to your email. Please verify to complete registration.',
             requiresVerification: true,
-            email: user.email,
-            note: 'Verification code has been sent to your email. If you don\'t receive it, you can request a new code.'
+            email: email,
+            note: 'Your account will be created only after email verification. Please check your email for the OTP.'
         });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Registration error:', error);
+        // Clean up on error
+        if (req.body.email) {
+            await PendingRegistration.deleteOne({ email: req.body.email }).catch(() => {});
+        }
+        res.status(500).json({ error: error.message || 'Registration failed. Please try again.' });
     }
 });
 
-// Send verification code
+// Send verification code (for pending registrations only)
 router.post('/send-verification-code', async (req, res) => {
     try {
         const { email } = req.body;
 
-        const user = await User.findOne({ email });
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
+        // Check if user already exists and is verified
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            if (existingUser.emailVerified) {
+                return res.status(400).json({ error: 'Email already verified. Please login.' });
+            } else {
+                return res.status(400).json({ error: 'Account already exists but not verified. Please verify your email or contact support.' });
+            }
         }
 
-        if (user.emailVerified) {
-            return res.status(400).json({ error: 'Email already verified' });
+        // Check for pending registration
+        const pendingRegistration = await PendingRegistration.findOne({ email });
+        if (!pendingRegistration) {
+            return res.status(404).json({ 
+                error: 'No pending registration found. Please register again.' 
+            });
         }
 
         // Generate new verification code
@@ -308,54 +334,98 @@ router.post('/send-verification-code', async (req, res) => {
         const codeExpiry = new Date();
         codeExpiry.setMinutes(codeExpiry.getMinutes() + 10);
 
-        user.emailVerificationCode = verificationCode;
-        user.emailVerificationCodeExpiry = codeExpiry;
-        await user.save();
+        pendingRegistration.emailVerificationCode = verificationCode;
+        pendingRegistration.emailVerificationCodeExpiry = codeExpiry;
+        await pendingRegistration.save();
 
-        // Send verification email (non-blocking)
-        sendVerificationEmail(email, verificationCode).catch(err => {
-            console.error('Background email send error:', err);
-        });
+        // Send verification email
+        const emailSent = await sendVerificationEmail(email, verificationCode);
+        
+        if (!emailSent) {
+            return res.status(500).json({ 
+                error: 'Failed to send verification email. Please try again.' 
+            });
+        }
 
-        // Always return success (email will be sent in background)
         res.json({ 
             message: 'Verification code sent to your email',
             note: 'If you don\'t receive the email, please check your spam folder or try again.'
         });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Send verification code error:', error);
+        res.status(500).json({ error: error.message || 'Failed to send verification code' });
     }
 });
 
-// Verify email
+// Verify email and create account (only after OTP verification)
 router.post('/verify-email', async (req, res) => {
     try {
         const { email, code } = req.body;
 
-        const user = await User.findOne({ email });
-        if (!user) {
-            return res.status(404).json({ error: 'User not found' });
+        // Check if user already exists (should not happen, but safety check)
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            if (existingUser.emailVerified) {
+                // Generate token for already verified user
+                const token = jwt.sign(
+                    { userId: existingUser._id },
+                    process.env.JWT_SECRET,
+                    { expiresIn: '7d' }
+                );
+                return res.json({
+                    message: 'Email already verified',
+                    user: {
+                        id: existingUser._id,
+                        email: existingUser.email,
+                        name: existingUser.name,
+                        role: existingUser.role,
+                        emailVerified: true
+                    },
+                    token
+                });
+            } else {
+                return res.status(400).json({ 
+                    error: 'Account exists but not verified. Please contact support.' 
+                });
+            }
         }
 
-        if (user.emailVerified) {
-            return res.status(400).json({ error: 'Email already verified' });
+        // Find pending registration
+        const pendingRegistration = await PendingRegistration.findOne({ email });
+        if (!pendingRegistration) {
+            return res.status(404).json({ 
+                error: 'No pending registration found. Please register again.' 
+            });
         }
 
         // Check if code matches
-        if (user.emailVerificationCode !== code) {
+        if (pendingRegistration.emailVerificationCode !== code) {
             return res.status(400).json({ error: 'Invalid verification code' });
         }
 
         // Check if code expired
-        if (new Date() > user.emailVerificationCodeExpiry) {
-            return res.status(400).json({ error: 'Verification code expired. Please request a new one.' });
+        if (new Date() > pendingRegistration.emailVerificationCodeExpiry) {
+            // Delete expired pending registration
+            await PendingRegistration.deleteOne({ email });
+            return res.status(400).json({ 
+                error: 'Verification code expired. Please register again.' 
+            });
         }
 
-        // Verify email
-        user.emailVerified = true;
-        user.emailVerificationCode = null;
-        user.emailVerificationCodeExpiry = null;
+        // Create the actual user account (ONLY after OTP verification)
+        const user = new User({
+            email: pendingRegistration.email,
+            password: pendingRegistration.password, // Already hashed
+            name: pendingRegistration.name,
+            phone: pendingRegistration.phone,
+            emailVerified: true, // Mark as verified since OTP is verified
+            emailVerificationCode: null,
+            emailVerificationCodeExpiry: null
+        });
         await user.save();
+
+        // Delete pending registration after successful account creation
+        await PendingRegistration.deleteOne({ email });
 
         // Generate token
         const token = jwt.sign(
@@ -365,7 +435,7 @@ router.post('/verify-email', async (req, res) => {
         );
 
         res.json({
-            message: 'Email verified successfully',
+            message: 'Email verified successfully. Your account has been created!',
             user: {
                 id: user._id,
                 email: user.email,
@@ -376,7 +446,16 @@ router.post('/verify-email', async (req, res) => {
             token
         });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Verify email error:', error);
+        
+        // If user creation fails but pending registration exists, clean it up
+        if (req.body.email) {
+            await PendingRegistration.deleteOne({ email: req.body.email }).catch(() => {});
+        }
+        
+        res.status(500).json({ 
+            error: error.message || 'Failed to verify email. Please try again.' 
+        });
     }
 });
 
