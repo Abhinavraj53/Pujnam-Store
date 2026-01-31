@@ -12,8 +12,8 @@ const generateVerificationCode = () => {
     return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-// Email transporter configuration with timeout and connection settings
-const createTransporter = () => {
+// Email transporter configuration with multiple fallback options
+const createTransporter = (attempt = 0) => {
     const emailUser = process.env.EMAIL_USER;
     const emailPass = process.env.EMAIL_PASSWORD;
     
@@ -22,31 +22,67 @@ const createTransporter = () => {
         throw new Error('Email configuration missing');
     }
 
-    // Try port 465 with SSL first (more reliable on Render)
-    // If that fails, fallback to port 587
-    const useSSL = process.env.EMAIL_USE_SSL !== 'false'; // Default to SSL
+    // Try different configurations based on attempt
+    const configs = [
+        // Config 1: Port 587 with STARTTLS (most compatible)
+        {
+            host: 'smtp.gmail.com',
+            port: 587,
+            secure: false,
+            requireTLS: true,
+            auth: {
+                user: emailUser,
+                pass: emailPass
+            },
+            connectionTimeout: 10000, // 10 seconds
+            greetingTimeout: 5000, // 5 seconds
+            socketTimeout: 10000, // 10 seconds
+            tls: {
+                rejectUnauthorized: false,
+                ciphers: 'SSLv3'
+            }
+        },
+        // Config 2: Port 465 with SSL
+        {
+            host: 'smtp.gmail.com',
+            port: 465,
+            secure: true,
+            auth: {
+                user: emailUser,
+                pass: emailPass
+            },
+            connectionTimeout: 10000,
+            greetingTimeout: 5000,
+            socketTimeout: 10000,
+            tls: {
+                rejectUnauthorized: false
+            }
+        },
+        // Config 3: Port 587 without requireTLS
+        {
+            host: 'smtp.gmail.com',
+            port: 587,
+            secure: false,
+            auth: {
+                user: emailUser,
+                pass: emailPass
+            },
+            connectionTimeout: 10000,
+            greetingTimeout: 5000,
+            socketTimeout: 10000,
+            tls: {
+                rejectUnauthorized: false,
+                minVersion: 'TLSv1'
+            }
+        }
+    ];
+
+    const config = configs[attempt] || configs[0];
+    console.log(`📧 Using SMTP config ${attempt + 1}: port ${config.port}, secure: ${config.secure}`);
     
     return nodemailer.createTransport({
-        service: 'gmail',
-        host: 'smtp.gmail.com',
-        port: useSSL ? 465 : 587,
-        secure: useSSL, // true for 465, false for 587
-        auth: {
-            user: emailUser,
-            pass: emailPass
-        },
-        // Connection timeout settings for Render (reduced for faster failure)
-        connectionTimeout: 20000, // 20 seconds (reduced from 60)
-        greetingTimeout: 10000, // 10 seconds (reduced from 30)
-        socketTimeout: 20000, // 20 seconds (reduced from 60)
-        // Retry settings
-        pool: false, // Disable pooling for better reliability
-        // Additional options for better reliability
-        tls: {
-            rejectUnauthorized: false, // Allow self-signed certificates
-            ciphers: 'SSLv3' // Try different cipher
-        },
-        // Debug mode (set EMAIL_DEBUG=true to enable)
+        ...config,
+        pool: false,
         debug: process.env.EMAIL_DEBUG === 'true',
         logger: process.env.EMAIL_DEBUG === 'true'
     });
@@ -54,20 +90,33 @@ const createTransporter = () => {
 
 // Send verification email with retry logic and better error handling
 const sendVerificationEmail = async (email, code, retries = 3) => {
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    // Try different SMTP configs (3 configs × retries)
+    const smtpConfigs = 3;
+    const totalAttempts = smtpConfigs * (retries + 1);
+    
+    for (let attempt = 0; attempt < totalAttempts; attempt++) {
         let transporter = null;
+        const configIndex = Math.floor(attempt / (retries + 1));
+        const retryIndex = attempt % (retries + 1);
+        
         try {
-            // Create new transporter for each attempt
-            transporter = createTransporter();
+            // Create new transporter with different config for each attempt
+            transporter = createTransporter(configIndex);
             
-            // Verify connection first
+            // Skip verification on Render (it often times out but send works)
+            // Only verify on first attempt of first config
             if (attempt === 0) {
                 try {
-                    await transporter.verify();
+                    // Quick verification with timeout
+                    const verifyPromise = transporter.verify();
+                    const verifyTimeout = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Verify timeout')), 5000)
+                    );
+                    await Promise.race([verifyPromise, verifyTimeout]);
                     console.log(`✅ SMTP connection verified for ${email}`);
                 } catch (verifyError) {
-                    console.error(`❌ SMTP verification failed:`, verifyError.message);
-                    // Continue anyway, sometimes verify fails but send works
+                    console.log(`⚠️ SMTP verification skipped (will try sending anyway):`, verifyError.message);
+                    // Continue - verification often fails on Render but sending works
                 }
             }
             
@@ -91,24 +140,27 @@ const sendVerificationEmail = async (email, code, retries = 3) => {
                 `
             };
             
-            // Set timeout for sendMail (reduced to 15 seconds)
+            // Set timeout for sendMail (increased to 25 seconds for Render)
             const sendPromise = transporter.sendMail(mailOptions);
             const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000)
+                setTimeout(() => reject(new Error('Email send timeout after 25 seconds')), 25000)
             );
             
             const result = await Promise.race([sendPromise, timeoutPromise]);
-            console.log(`✅ Verification email sent to ${email} (attempt ${attempt + 1})`, result.messageId || '');
+            console.log(`✅ Verification email sent to ${email} (config ${configIndex + 1}, attempt ${retryIndex + 1})`, result.messageId || '');
             
             // Close transporter
-            transporter.close();
+            try {
+                transporter.close();
+            } catch (closeError) {
+                // Ignore close errors
+            }
             return true;
         } catch (error) {
-            console.error(`❌ Email sending error (attempt ${attempt + 1}/${retries + 1}):`, {
+            console.error(`❌ Email sending error (config ${configIndex + 1}, attempt ${retryIndex + 1}/${totalAttempts}):`, {
                 message: error.message,
                 code: error.code,
-                command: error.command,
-                response: error.response
+                command: error.command
             });
             
             // Close transporter on error
@@ -121,15 +173,15 @@ const sendVerificationEmail = async (email, code, retries = 3) => {
             }
             
             // If it's the last attempt, return false
-            if (attempt === retries) {
-                console.error(`❌ Failed to send verification email to ${email} after ${retries + 1} attempts`);
-                console.error('Full error:', error);
+            if (attempt === totalAttempts - 1) {
+                console.error(`❌ Failed to send verification email to ${email} after ${totalAttempts} attempts with ${smtpConfigs} different SMTP configs`);
+                console.error('💡 Suggestion: Gmail SMTP may be blocked on Render. Consider using SendGrid, Mailgun, or Resend.');
                 return false;
             }
             
-            // Wait before retry (exponential backoff)
-            const waitTime = 2000 * (attempt + 1); // 2s, 4s, 6s
-            console.log(`⏳ Waiting ${waitTime}ms before retry...`);
+            // Wait before retry (shorter wait times)
+            const waitTime = 1000 * (retryIndex + 1); // 1s, 2s, 3s
+            console.log(`⏳ Waiting ${waitTime}ms before retry (config ${configIndex + 1})...`);
             await new Promise(resolve => setTimeout(resolve, waitTime));
         }
     }
@@ -183,50 +235,50 @@ const sendPasswordResetOTP = async (email, code, retries = 2) => {
                 `
             };
             
-            // Verify connection first
+            // Skip verification (often fails on Render but send works)
             if (attempt === 0) {
                 try {
-                    await transporter.verify();
+                    const verifyPromise = transporter.verify();
+                    const verifyTimeout = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Verify timeout')), 5000)
+                    );
+                    await Promise.race([verifyPromise, verifyTimeout]);
                 } catch (verifyError) {
-                    console.error(`❌ SMTP verification failed:`, verifyError.message);
+                    // Continue anyway
                 }
             }
             
-            // Set timeout for sendMail (reduced to 15 seconds)
+            // Set timeout for sendMail (increased to 25 seconds)
             const sendPromise = transporter.sendMail(mailOptions);
             const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000)
+                setTimeout(() => reject(new Error('Email send timeout after 25 seconds')), 25000)
             );
             
             const result = await Promise.race([sendPromise, timeoutPromise]);
-            console.log(`✅ Password reset OTP sent to ${email} (attempt ${attempt + 1})`, result.messageId || '');
+            console.log(`✅ Password reset OTP sent to ${email} (config ${configIndex + 1}, attempt ${retryIndex + 1})`, result.messageId || '');
             
-            // Close transporter
-            transporter.close();
+            try {
+                transporter.close();
+            } catch (closeError) {}
             return true;
         } catch (error) {
-            console.error(`❌ Password reset email error (attempt ${attempt + 1}/${retries + 1}):`, {
+            console.error(`❌ Password reset email error (config ${configIndex + 1}, attempt ${retryIndex + 1}/${totalAttempts}):`, {
                 message: error.message,
-                code: error.code,
-                command: error.command
+                code: error.code
             });
             
-            // Close transporter on error
             if (transporter) {
                 try {
                     transporter.close();
-                } catch (closeError) {
-                    // Ignore close errors
-                }
+                } catch (closeError) {}
             }
             
-            if (attempt === retries) {
-                console.error(`❌ Failed to send password reset OTP to ${email} after ${retries + 1} attempts`);
+            if (attempt === totalAttempts - 1) {
+                console.error(`❌ Failed to send password reset OTP to ${email} after ${totalAttempts} attempts`);
                 return false;
             }
             
-            // Wait before retry (exponential backoff)
-            const waitTime = 2000 * (attempt + 1);
+            const waitTime = 1000 * (retryIndex + 1);
             await new Promise(resolve => setTimeout(resolve, waitTime));
         }
     }
@@ -294,50 +346,50 @@ const sendPasswordChangeOTP = async (email, code, userName, retries = 2) => {
                 `
             };
             
-            // Verify connection first
+            // Skip verification (often fails on Render but send works)
             if (attempt === 0) {
                 try {
-                    await transporter.verify();
+                    const verifyPromise = transporter.verify();
+                    const verifyTimeout = new Promise((_, reject) => 
+                        setTimeout(() => reject(new Error('Verify timeout')), 5000)
+                    );
+                    await Promise.race([verifyPromise, verifyTimeout]);
                 } catch (verifyError) {
-                    console.error(`❌ SMTP verification failed:`, verifyError.message);
+                    // Continue anyway
                 }
             }
             
-            // Set timeout for sendMail (reduced to 15 seconds)
+            // Set timeout for sendMail (increased to 25 seconds)
             const sendPromise = transporter.sendMail(mailOptions);
             const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000)
+                setTimeout(() => reject(new Error('Email send timeout after 25 seconds')), 25000)
             );
             
             const result = await Promise.race([sendPromise, timeoutPromise]);
-            console.log(`✅ Password change OTP sent to ${email} (attempt ${attempt + 1})`, result.messageId || '');
+            console.log(`✅ Password change OTP sent to ${email} (config ${configIndex + 1}, attempt ${retryIndex + 1})`, result.messageId || '');
             
-            // Close transporter
-            transporter.close();
+            try {
+                transporter.close();
+            } catch (closeError) {}
             return true;
         } catch (error) {
-            console.error(`❌ Password change email error (attempt ${attempt + 1}/${retries + 1}):`, {
+            console.error(`❌ Password change email error (config ${configIndex + 1}, attempt ${retryIndex + 1}/${totalAttempts}):`, {
                 message: error.message,
-                code: error.code,
-                command: error.command
+                code: error.code
             });
             
-            // Close transporter on error
             if (transporter) {
                 try {
                     transporter.close();
-                } catch (closeError) {
-                    // Ignore close errors
-                }
+                } catch (closeError) {}
             }
             
-            if (attempt === retries) {
-                console.error(`❌ Failed to send password change OTP to ${email} after ${retries + 1} attempts`);
+            if (attempt === totalAttempts - 1) {
+                console.error(`❌ Failed to send password change OTP to ${email} after ${totalAttempts} attempts`);
                 return false;
             }
             
-            // Wait before retry (exponential backoff)
-            const waitTime = 2000 * (attempt + 1);
+            const waitTime = 1000 * (retryIndex + 1);
             await new Promise(resolve => setTimeout(resolve, waitTime));
         }
     }
