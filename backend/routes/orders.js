@@ -156,11 +156,40 @@ const sendOrderConfirmationEmail = async (order, customerEmail, customerName) =>
             `
         };
 
-        await transporter.sendMail(mailOptions);
-        console.log(`Order confirmation email sent to ${customerEmail} for order #${order._id}`);
+        // Verify connection first
+        try {
+            await transporter.verify();
+        } catch (verifyError) {
+            console.error(`❌ SMTP verification failed:`, verifyError.message);
+        }
+        
+        // Set timeout for sendMail (reduced to 15 seconds)
+        const sendPromise = transporter.sendMail(mailOptions);
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000)
+        );
+        
+        const result = await Promise.race([sendPromise, timeoutPromise]);
+        console.log(`✅ Order confirmation email sent to ${customerEmail} for order #${order._id}`, result.messageId || '');
+        
+        // Close transporter
+        transporter.close();
         return true;
     } catch (error) {
-        console.error('Error sending order confirmation email:', error);
+        console.error('❌ Error sending order confirmation email:', {
+            message: error.message,
+            code: error.code,
+            command: error.command
+        });
+        
+        // Close transporter on error
+        if (transporter) {
+            try {
+                transporter.close();
+            } catch (closeError) {
+                // Ignore close errors
+            }
+        }
         return false;
     }
 };
