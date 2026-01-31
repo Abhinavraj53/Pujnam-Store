@@ -7,10 +7,10 @@ const sendEmail = async (options) => {
     // Try Resend first (if API key is set)
     if (process.env.RESEND_API_KEY) {
         try {
-            const resend = require('resend');
-            const resendClient = new resend.Resend(process.env.RESEND_API_KEY);
+            const { Resend } = require('resend');
+            const resend = new Resend(process.env.RESEND_API_KEY);
             
-            const result = await resendClient.emails.send({
+            const result = await resend.emails.send({
                 from: from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev',
                 to: to,
                 subject: subject,
