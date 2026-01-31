@@ -1,10 +1,10 @@
 const nodemailer = require('nodemailer');
 
-// Email service using Resend (recommended) or Gmail SMTP (fallback)
+// Email service using Resend (recommended), Hostinger SMTP, or Gmail SMTP (fallback)
 const sendEmail = async (options) => {
     const { to, subject, html, from } = options;
     
-    // Try Resend first (if API key is set)
+    // Priority 1: Try Resend first (if API key is set)
     if (process.env.RESEND_API_KEY) {
         try {
             const { Resend } = require('resend');
@@ -25,14 +25,54 @@ const sendEmail = async (options) => {
             return true;
         } catch (error) {
             console.error('❌ Resend error:', error.message);
-            // Fallback to Gmail SMTP
+            console.log('🔄 Falling back to Hostinger SMTP...');
+        }
+    }
+    
+    // Priority 2: Try Hostinger SMTP (if configured)
+    if (process.env.HOSTINGER_EMAIL_USER && process.env.HOSTINGER_EMAIL_PASSWORD) {
+        try {
+            const transporter = nodemailer.createTransport({
+                host: 'smtp.hostinger.com',
+                port: parseInt(process.env.HOSTINGER_SMTP_PORT || '465'), // Default 465 (SSL), can use 587 (TLS)
+                secure: process.env.HOSTINGER_SMTP_PORT === '587' ? false : true, // true for 465, false for 587
+                auth: {
+                    user: process.env.HOSTINGER_EMAIL_USER,
+                    pass: process.env.HOSTINGER_EMAIL_PASSWORD
+                },
+                connectionTimeout: 15000, // 15 seconds
+                greetingTimeout: 5000,
+                socketTimeout: 15000,
+                tls: {
+                    rejectUnauthorized: false
+                }
+            });
+            
+            const mailOptions = {
+                from: from || `"Pujnam Store" <${process.env.HOSTINGER_EMAIL_USER}>`,
+                to: to,
+                subject: subject,
+                html: html
+            };
+            
+            const sendPromise = transporter.sendMail(mailOptions);
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Hostinger SMTP timeout')), 20000)
+            );
+            
+            const result = await Promise.race([sendPromise, timeoutPromise]);
+            console.log(`✅ Email sent via Hostinger SMTP to ${to}`, result.messageId || '');
+            transporter.close();
+            return true;
+        } catch (error) {
+            console.error('❌ Hostinger SMTP error:', error.message);
             console.log('🔄 Falling back to Gmail SMTP...');
         }
     }
     
-    // Fallback to Gmail SMTP
+    // Priority 3: Fallback to Gmail SMTP
     if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
-        throw new Error('No email service configured. Set RESEND_API_KEY or EMAIL_USER/EMAIL_PASSWORD');
+        throw new Error('No email service configured. Set RESEND_API_KEY, HOSTINGER_EMAIL_USER, or EMAIL_USER/EMAIL_PASSWORD');
     }
     
     // Try Gmail SMTP with quick timeout
