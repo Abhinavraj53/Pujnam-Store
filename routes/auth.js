@@ -294,25 +294,51 @@ const sendPasswordChangeOTP = async (email, code, userName, retries = 2) => {
                 `
             };
             
-            // Set timeout for sendMail
+            // Verify connection first
+            if (attempt === 0) {
+                try {
+                    await transporter.verify();
+                } catch (verifyError) {
+                    console.error(`❌ SMTP verification failed:`, verifyError.message);
+                }
+            }
+            
+            // Set timeout for sendMail (reduced to 15 seconds)
             const sendPromise = transporter.sendMail(mailOptions);
             const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Email send timeout')), 30000)
+                setTimeout(() => reject(new Error('Email send timeout after 15 seconds')), 15000)
             );
             
-            await Promise.race([sendPromise, timeoutPromise]);
-            console.log(`✅ Password change OTP sent to ${email} (attempt ${attempt + 1})`);
+            const result = await Promise.race([sendPromise, timeoutPromise]);
+            console.log(`✅ Password change OTP sent to ${email} (attempt ${attempt + 1})`, result.messageId || '');
+            
+            // Close transporter
+            transporter.close();
             return true;
         } catch (error) {
-            console.error(`❌ Password change email error (attempt ${attempt + 1}/${retries + 1}):`, error.message);
+            console.error(`❌ Password change email error (attempt ${attempt + 1}/${retries + 1}):`, {
+                message: error.message,
+                code: error.code,
+                command: error.command
+            });
+            
+            // Close transporter on error
+            if (transporter) {
+                try {
+                    transporter.close();
+                } catch (closeError) {
+                    // Ignore close errors
+                }
+            }
             
             if (attempt === retries) {
-                console.error(`Failed to send password change OTP to ${email} after ${retries + 1} attempts`);
+                console.error(`❌ Failed to send password change OTP to ${email} after ${retries + 1} attempts`);
                 return false;
             }
             
             // Wait before retry (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+            const waitTime = 2000 * (attempt + 1);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
         }
     }
     return false;
