@@ -7,8 +7,8 @@ const { auth, adminAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Email transporter configuration with timeout and connection settings
-const createTransporter = () => {
+// Email transporter configuration with multiple fallback options
+const createTransporter = (attempt = 0) => {
     const emailUser = process.env.EMAIL_USER;
     const emailPass = process.env.EMAIL_PASSWORD;
     
@@ -17,28 +17,44 @@ const createTransporter = () => {
         throw new Error('Email configuration missing');
     }
 
-    const useSSL = process.env.EMAIL_USE_SSL !== 'false'; // Default to SSL
-    
+    const configs = [
+        {
+            host: 'smtp.gmail.com',
+            port: 587,
+            secure: false,
+            requireTLS: true,
+            auth: { user: emailUser, pass: emailPass },
+            connectionTimeout: 10000,
+            greetingTimeout: 5000,
+            socketTimeout: 10000,
+            tls: { rejectUnauthorized: false, ciphers: 'SSLv3' }
+        },
+        {
+            host: 'smtp.gmail.com',
+            port: 465,
+            secure: true,
+            auth: { user: emailUser, pass: emailPass },
+            connectionTimeout: 10000,
+            greetingTimeout: 5000,
+            socketTimeout: 10000,
+            tls: { rejectUnauthorized: false }
+        },
+        {
+            host: 'smtp.gmail.com',
+            port: 587,
+            secure: false,
+            auth: { user: emailUser, pass: emailPass },
+            connectionTimeout: 10000,
+            greetingTimeout: 5000,
+            socketTimeout: 10000,
+            tls: { rejectUnauthorized: false, minVersion: 'TLSv1' }
+        }
+    ];
+
+    const config = configs[attempt] || configs[0];
     return nodemailer.createTransport({
-        service: 'gmail',
-        host: 'smtp.gmail.com',
-        port: useSSL ? 465 : 587,
-        secure: useSSL, // true for 465, false for 587
-        auth: {
-            user: emailUser,
-            pass: emailPass
-        },
-        // Connection timeout settings for Render (reduced for faster failure)
-        connectionTimeout: 20000, // 20 seconds
-        greetingTimeout: 10000, // 10 seconds
-        socketTimeout: 20000, // 20 seconds
-        // Retry settings
-        pool: false, // Disable pooling for better reliability
-        // Additional options for better reliability
-        tls: {
-            rejectUnauthorized: false,
-            ciphers: 'SSLv3'
-        },
+        ...config,
+        pool: false,
         debug: process.env.EMAIL_DEBUG === 'true',
         logger: process.env.EMAIL_DEBUG === 'true'
     });
