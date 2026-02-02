@@ -138,6 +138,45 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Pujnam Store API is running' });
 });
 
+// Diagnostic endpoint to check email service configuration (for debugging)
+app.get('/api/diagnostics/email', (req, res) => {
+  const isRender = !!(
+    process.env.RENDER || 
+    process.env.RENDER_EXTERNAL_URL || 
+    process.env.RENDER_SERVICE_NAME
+  );
+  
+  res.json({
+    environment: {
+      isRender: isRender,
+      nodeEnv: process.env.NODE_ENV || 'development',
+      hasRenderEnv: !!process.env.RENDER,
+      hasRenderUrl: !!process.env.RENDER_EXTERNAL_URL,
+      hasRenderService: !!process.env.RENDER_SERVICE_NAME
+    },
+    emailServices: {
+      hostinger: {
+        configured: !!(process.env.HOSTINGER_EMAIL_USER && process.env.HOSTINGER_EMAIL_PASSWORD),
+        hasUser: !!process.env.HOSTINGER_EMAIL_USER,
+        hasPassword: !!process.env.HOSTINGER_EMAIL_PASSWORD,
+        port: process.env.HOSTINGER_SMTP_PORT || 'not set'
+      },
+      resend: {
+        configured: !!process.env.RESEND_API_KEY,
+        hasApiKey: !!process.env.RESEND_API_KEY,
+        hasFromEmail: !!process.env.RESEND_FROM_EMAIL,
+        fromEmail: process.env.RESEND_FROM_EMAIL || 'not set'
+      },
+      gmail: {
+        configured: !!(process.env.EMAIL_USER && process.env.EMAIL_PASSWORD),
+        hasUser: !!process.env.EMAIL_USER,
+        hasPassword: !!process.env.EMAIL_PASSWORD
+      }
+    },
+    recommendedService: isRender ? 'Resend (most reliable on Render)' : 'Hostinger or Resend'
+  });
+});
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error('Error:', err.stack);
@@ -149,6 +188,7 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5001;
 const HOST = '0.0.0.0'; // Always bind to 0.0.0.0 for Render
 
+// Log environment variables status (without exposing sensitive data)
 console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
 console.log(`🔌 PORT from Render: ${process.env.PORT || 'Not set (using default 5001)'}`);
 console.log(`🌐 Binding to: ${HOST}:${PORT}`);
