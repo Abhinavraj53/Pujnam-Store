@@ -1,23 +1,81 @@
 const nodemailer = require('nodemailer');
 
-// Email service using Hostinger SMTP (primary), Resend, or Gmail SMTP (fallback)
+// Email service using Resend (primary on Render), Hostinger SMTP, or Gmail SMTP (fallback)
 const sendEmail = async (options) => {
     const { to, subject, html, from } = options;
     
-    // Priority 1: Try Hostinger SMTP first (if configured)
+    // Detect if running on Render (multiple ways to detect)
+    const isRender = !!(
+        process.env.RENDER || 
+        process.env.RENDER_EXTERNAL_URL || 
+        process.env.RENDER_SERVICE_NAME ||
+        (process.env.PORT && process.env.NODE_ENV === 'production' && !process.env.LOCAL)
+    );
+    
+    // Log environment detection for debugging
+    console.log('🔍 Environment Detection:', {
+        isRender: isRender,
+        hasRenderEnv: !!process.env.RENDER,
+        hasRenderUrl: !!process.env.RENDER_EXTERNAL_URL,
+        hasRenderService: !!process.env.RENDER_SERVICE_NAME,
+        nodeEnv: process.env.NODE_ENV,
+        port: process.env.PORT
+    });
+    
+    // Log available email service credentials (without exposing passwords)
+    console.log('📋 Available Email Services:', {
+        hasHostingerUser: !!process.env.HOSTINGER_EMAIL_USER,
+        hasHostingerPass: !!process.env.HOSTINGER_EMAIL_PASSWORD,
+        hasResendKey: !!process.env.RESEND_API_KEY,
+        hasResendFrom: !!process.env.RESEND_FROM_EMAIL,
+        hasGmailUser: !!process.env.EMAIL_USER,
+        hasGmailPass: !!process.env.EMAIL_PASSWORD
+    });
+    
+    // Priority 1: On Render, try Resend FIRST (most reliable)
+    // On localhost, try Hostinger first
+    if (isRender && process.env.RESEND_API_KEY) {
+        try {
+            const { Resend } = require('resend');
+            const resend = new Resend(process.env.RESEND_API_KEY);
+            
+            const fromEmail = from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+            
+            console.log(`📧 [Render] Attempting to send email via Resend to ${to} from ${fromEmail}`);
+            
+            const result = await resend.emails.send({
+                from: fromEmail,
+                to: to,
+                subject: subject,
+                html: html
+            });
+            
+            if (result.error) {
+                console.error('❌ Resend API error:', result.error);
+                throw new Error(result.error.message || 'Resend API error');
+            }
+            
+            console.log(`✅ [Render] Email sent via Resend to ${to}`, result.data?.id || '');
+            return true;
+        } catch (error) {
+            console.error('❌ [Render] Resend error:', error.message || error);
+            console.error('Resend error details:', error);
+            console.log('🔄 [Render] Falling back to Hostinger SMTP...');
+        }
+    }
+    
+    // Priority 2: Try Hostinger SMTP (if configured)
     if (process.env.HOSTINGER_EMAIL_USER && process.env.HOSTINGER_EMAIL_PASSWORD) {
-        // Detect if running on Render
-        const isRender = process.env.RENDER || process.env.RENDER_EXTERNAL_URL || false;
         
         // On Render, try port 587 first (TLS works better), then 465
         // On localhost, use configured port or default to 465
         let portsToTry;
         if (isRender) {
             portsToTry = process.env.HOSTINGER_SMTP_PORT ? [parseInt(process.env.HOSTINGER_SMTP_PORT)] : [587, 465];
-            console.log('🌐 Running on Render - using optimized SMTP settings');
+            console.log('🌐 [Render] Using Hostinger SMTP with optimized settings');
         } else {
             portsToTry = process.env.HOSTINGER_SMTP_PORT ? [parseInt(process.env.HOSTINGER_SMTP_PORT)] : [465, 587];
-            console.log('💻 Running on localhost');
+            console.log('💻 [Localhost] Using Hostinger SMTP');
         }
         
         for (const port of portsToTry) {
@@ -109,15 +167,15 @@ const sendEmail = async (options) => {
         console.log('⚠️ HOSTINGER_EMAIL_USER not set, skipping Hostinger SMTP');
     }
     
-    // Priority 2: Try Resend (if API key is set)
-    if (process.env.RESEND_API_KEY) {
+    // Priority 3: Try Resend (if not already tried on Render and API key is set)
+    if (!isRender && process.env.RESEND_API_KEY) {
         try {
             const { Resend } = require('resend');
             const resend = new Resend(process.env.RESEND_API_KEY);
             
             const fromEmail = from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
             
-            console.log(`📧 Attempting to send email via Resend to ${to} from ${fromEmail}`);
+            console.log(`📧 [Localhost] Attempting to send email via Resend to ${to} from ${fromEmail}`);
             
             const result = await resend.emails.send({
                 from: fromEmail,
@@ -131,22 +189,23 @@ const sendEmail = async (options) => {
                 throw new Error(result.error.message || 'Resend API error');
             }
             
-            console.log(`✅ Email sent via Resend to ${to}`, result.data?.id || '');
+            console.log(`✅ [Localhost] Email sent via Resend to ${to}`, result.data?.id || '');
             return true;
         } catch (error) {
             console.error('❌ Resend error:', error.message || error);
             console.error('Resend error details:', error);
             console.log('🔄 Falling back to Gmail SMTP...');
         }
-    } else {
+    } else if (!isRender) {
         console.log('⚠️ RESEND_API_KEY not set, skipping Resend');
     }
     
-    // Priority 3: Fallback to Gmail SMTP
+    // Priority 4: Fallback to Gmail SMTP
     if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
         let transporter = null;
         try {
-            console.log(`📧 Attempting to send email via Gmail SMTP to ${to}`);
+            const envLabel = isRender ? '[Render]' : '[Localhost]';
+            console.log(`📧 ${envLabel} Attempting to send email via Gmail SMTP to ${to}`);
             
             transporter = nodemailer.createTransport({
                 host: 'smtp.gmail.com',
