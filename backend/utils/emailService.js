@@ -163,7 +163,7 @@ const sendEmail = async (options) => {
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     continue;
                 } else {
-                    console.log('🔄 All Hostinger ports failed, falling back to Gmail SMTP...');
+                    console.log('🔄 All Hostinger ports failed');
                 }
             }
         }
@@ -171,84 +171,26 @@ const sendEmail = async (options) => {
         console.log('⚠️ HOSTINGER_EMAIL_USER not set, skipping Hostinger SMTP');
     }
     
-    // Priority 2: Fallback to Gmail SMTP (if Hostinger fails)
-    if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
-        let transporter = null;
-        try {
-            const envLabel = isRender ? '[Render]' : '[Localhost]';
-            console.log(`📧 ${envLabel} Attempting to send email via Gmail SMTP to ${to}`);
-            
-            transporter = nodemailer.createTransport({
-                host: 'smtp.gmail.com',
-                port: 587,
-                secure: false,
-                requireTLS: true,
-                auth: {
-                    user: process.env.EMAIL_USER,
-                    pass: process.env.EMAIL_PASSWORD
-                },
-                connectionTimeout: 5000, // 5 seconds only
-                greetingTimeout: 3000,
-                socketTimeout: 5000,
-                tls: {
-                    rejectUnauthorized: false
-                }
-            });
-            
-            const mailOptions = {
-                from: from || `"Pujnam Store" <${process.env.EMAIL_USER}>`,
-                to: to,
-                subject: subject,
-                html: html
-            };
-            
-            // Quick send with timeout
-            const sendPromise = transporter.sendMail(mailOptions);
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Gmail SMTP timeout')), 10000)
-            );
-            
-            const result = await Promise.race([sendPromise, timeoutPromise]);
-            console.log(`✅ Email sent via Gmail SMTP to ${to}`, result.messageId || '');
-            
-            if (transporter) {
-                try {
-                    transporter.close();
-                } catch (closeError) {
-                    // Ignore close errors
-                }
-            }
-            return true;
-        } catch (error) {
-            if (transporter) {
-                try {
-                    transporter.close();
-                } catch (closeError) {
-                    // Ignore close errors
-                }
-            }
-            console.error('❌ Gmail SMTP error:', error.message || error);
-            console.error('Gmail error details:', error);
-            // Don't throw, let it fall through to final error
-        }
-    }
-    
-    // If all services failed
-    const errorMessage = 'All email services failed. Check HOSTINGER_EMAIL_USER/HOSTINGER_EMAIL_PASSWORD or EMAIL_USER/EMAIL_PASSWORD';
+    // If Hostinger SMTP failed
+    const errorMessage = 'Hostinger SMTP failed. Check HOSTINGER_EMAIL_USER and HOSTINGER_EMAIL_PASSWORD';
     console.error('❌', errorMessage);
     console.error('Available env vars:', {
         hasHostingerUser: !!process.env.HOSTINGER_EMAIL_USER,
-        hasHostingerPass: !!process.env.HOSTINGER_EMAIL_PASSWORD,
-        hasGmailUser: !!process.env.EMAIL_USER,
-        hasGmailPass: !!process.env.EMAIL_PASSWORD
+        hasHostingerPass: !!process.env.HOSTINGER_EMAIL_PASSWORD
     });
     
     if (isRender) {
         console.error('💡 Render Troubleshooting:');
-        console.error('   1. Verify HOSTINGER_EMAIL_USER and HOSTINGER_EMAIL_PASSWORD are set');
+        console.error('   1. Verify HOSTINGER_EMAIL_USER and HOSTINGER_EMAIL_PASSWORD are set in Render dashboard');
         console.error('   2. Try HOSTINGER_SMTP_PORT=587 (TLS) instead of 465 (SSL)');
         console.error('   3. Check Hostinger email account is active');
-        console.error('   4. Contact Hostinger support if connection timeouts persist');
+        console.error('   4. Verify email password is correct');
+        console.error('   5. Contact Hostinger support if connection timeouts persist');
+    } else {
+        console.error('💡 Localhost Troubleshooting:');
+        console.error('   1. Verify HOSTINGER_EMAIL_USER and HOSTINGER_EMAIL_PASSWORD in backend/.env file');
+        console.error('   2. Check Hostinger email account is active');
+        console.error('   3. Verify email password is correct');
     }
     
     throw new Error(errorMessage);
