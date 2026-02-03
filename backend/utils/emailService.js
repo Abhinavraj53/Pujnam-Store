@@ -75,13 +75,13 @@ const sendEmail = async (options) => {
                         user: process.env.HOSTINGER_EMAIL_USER,
                         pass: process.env.HOSTINGER_EMAIL_PASSWORD
                     },
-                    connectionTimeout: isRender ? 30000 : 20000, // 30s on Render, 20s local
-                    greetingTimeout: isRender ? 15000 : 10000, // 15s on Render, 10s local
-                    socketTimeout: isRender ? 30000 : 20000, // 30s on Render, 20s local
+                    connectionTimeout: isRender ? 40000 : 20000, // 40s on Render (increased), 20s local
+                    greetingTimeout: isRender ? 20000 : 10000, // 20s on Render (increased), 10s local
+                    socketTimeout: isRender ? 40000 : 20000, // 40s on Render (increased), 20s local
                     tls: {
                         rejectUnauthorized: false,
                         minVersion: 'TLSv1.2', // Use TLS 1.2+ for better compatibility
-                        ciphers: 'SSLv3' // Try different cipher on Render
+                        ciphers: port === 587 ? 'DEFAULT' : 'SSLv3' // Different cipher for different ports
                     }
                 };
                 
@@ -89,6 +89,7 @@ const sendEmail = async (options) => {
                 if (isRender) {
                     transporterConfig.pool = false; // Disable pooling on Render
                     transporterConfig.maxConnections = 1;
+                    transporterConfig.ignoreTLS = false; // Don't ignore TLS
                 }
                 
                 transporter = nodemailer.createTransport(transporterConfig);
@@ -134,12 +135,13 @@ const sendEmail = async (options) => {
                 
                 // If this is not the last port, try next port
                 if (port !== portsToTry[portsToTry.length - 1]) {
-                    console.log(`🔄 Trying next port...`);
+                    const nextPort = portsToTry[portsToTry.indexOf(port) + 1];
+                    console.log(`🔄 Port ${port} failed, trying next port (${nextPort})...`);
                     // Wait a bit before trying next port
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Increased wait time
                     continue;
                 } else {
-                    console.log('🔄 All Hostinger ports failed');
+                    console.log(`🔄 All Hostinger ports failed (tried: ${portsToTry.join(', ')})`);
                 }
             }
         }
@@ -158,15 +160,17 @@ const sendEmail = async (options) => {
     if (isRender) {
         console.error('💡 Render Troubleshooting:');
         console.error('   1. Verify HOSTINGER_EMAIL_USER and HOSTINGER_EMAIL_PASSWORD are set in Render dashboard');
-        console.error('   2. Try HOSTINGER_SMTP_PORT=587 (TLS) instead of 465 (SSL)');
-        console.error('   3. Check Hostinger email account is active');
-        console.error('   4. Verify email password is correct');
-        console.error('   5. Contact Hostinger support if connection timeouts persist');
+        console.error('   2. Both ports (587 and 465) were tried - connection timeout indicates network/firewall issue');
+        console.error('   3. Check Hostinger email account is active and password is correct');
+        console.error('   4. Hostinger SMTP may be blocked on Render - contact Hostinger support');
+        console.error('   5. Alternative: Use a different email service (Resend, SendGrid, etc.)');
+        console.error('   6. Check Hostinger control panel for SMTP access restrictions');
     } else {
         console.error('💡 Localhost Troubleshooting:');
         console.error('   1. Verify HOSTINGER_EMAIL_USER and HOSTINGER_EMAIL_PASSWORD in backend/.env file');
         console.error('   2. Check Hostinger email account is active');
         console.error('   3. Verify email password is correct');
+        console.error('   4. Check firewall/antivirus is not blocking SMTP connections');
     }
     
     throw new Error(errorMessage);
