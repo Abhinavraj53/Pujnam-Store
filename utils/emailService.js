@@ -31,15 +31,31 @@ const sendEmail = async (options) => {
     // Priority 1: Try Hostinger SMTP (Primary - Only Email Service)
     if (process.env.HOSTINGER_EMAIL_USER && process.env.HOSTINGER_EMAIL_PASSWORD) {
         
-        // On Render, try port 587 first (TLS works better), then 465
-        // On localhost, use configured port or default to 465
+        // Port selection: Always try configured port first, then fallback port
+        // This ensures if configured port fails, we automatically try the alternative
         let portsToTry;
+        const envPort = process.env.HOSTINGER_SMTP_PORT ? parseInt(process.env.HOSTINGER_SMTP_PORT) : null;
+        
         if (isRender) {
-            portsToTry = process.env.HOSTINGER_SMTP_PORT ? [parseInt(process.env.HOSTINGER_SMTP_PORT)] : [587, 465];
+            if (envPort) {
+                // Try configured port first, then fallback to the other port
+                portsToTry = envPort === 587 ? [587, 465] : [465, 587];
+            } else {
+                // No port configured, default: try 587 first (better for Render), then 465
+                portsToTry = [587, 465];
+            }
             console.log('🌐 [Render] Using Hostinger SMTP with optimized settings');
+            console.log(`📌 Configured port: ${envPort || 'not set'}, will try ports: ${portsToTry.join(' → ')}`);
         } else {
-            portsToTry = process.env.HOSTINGER_SMTP_PORT ? [parseInt(process.env.HOSTINGER_SMTP_PORT)] : [465, 587];
+            if (envPort) {
+                // Try configured port first, then fallback
+                portsToTry = envPort === 465 ? [465, 587] : [587, 465];
+            } else {
+                // No port configured, default: try 465 first (better for localhost), then 587
+                portsToTry = [465, 587];
+            }
             console.log('💻 [Localhost] Using Hostinger SMTP');
+            console.log(`📌 Configured port: ${envPort || 'not set'}, will try ports: ${portsToTry.join(' → ')}`);
         }
         
         for (const port of portsToTry) {
@@ -85,7 +101,7 @@ const sendEmail = async (options) => {
                 };
                 
                 // Try to send with longer timeout on Render
-                const timeoutDuration = isRender ? 35000 : 25000;
+                const timeoutDuration = isRender ? 45000 : 25000; // 45s on Render (increased), 25s local
                 const sendPromise = transporter.sendMail(mailOptions);
                 const timeoutPromise = new Promise((_, reject) => 
                     setTimeout(() => reject(new Error(`Hostinger SMTP timeout (port ${port})`)), timeoutDuration)
