@@ -161,11 +161,6 @@ app.get('/api/diagnostics/email', (req, res) => {
         hasPassword: !!process.env.HOSTINGER_EMAIL_PASSWORD,
         port: process.env.HOSTINGER_SMTP_PORT || 'not set'
       },
-      gmail: {
-        configured: !!(process.env.EMAIL_USER && process.env.EMAIL_PASSWORD),
-        hasUser: !!process.env.EMAIL_USER,
-        hasPassword: !!process.env.EMAIL_PASSWORD
-      }
     },
     recommendedService: 'Hostinger SMTP (Primary)'
   });
