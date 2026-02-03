@@ -1,6 +1,6 @@
 const nodemailer = require('nodemailer');
 
-// Email service using Resend (primary on Render), Hostinger SMTP, or Gmail SMTP (fallback)
+// Email service using Hostinger SMTP only
 const sendEmail = async (options) => {
     const { to, subject, html, from } = options;
     
@@ -25,50 +25,10 @@ const sendEmail = async (options) => {
     // Log available email service credentials (without exposing passwords)
     console.log('📋 Available Email Services:', {
         hasHostingerUser: !!process.env.HOSTINGER_EMAIL_USER,
-        hasHostingerPass: !!process.env.HOSTINGER_EMAIL_PASSWORD,
-        hasResendKey: !!process.env.RESEND_API_KEY,
-        hasResendFrom: !!process.env.RESEND_FROM_EMAIL,
-        hasGmailUser: !!process.env.EMAIL_USER,
-        hasGmailPass: !!process.env.EMAIL_PASSWORD
+        hasHostingerPass: !!process.env.HOSTINGER_EMAIL_PASSWORD
     });
     
-    // Track if Resend was tried first (to avoid duplicate attempts)
-    let resendTriedFirst = false;
-    
-    // Priority 1: On Render, try Resend FIRST (most reliable)
-    // On localhost, try Hostinger first
-    if (isRender && process.env.RESEND_API_KEY) {
-        resendTriedFirst = true;
-        try {
-            const { Resend } = require('resend');
-            const resend = new Resend(process.env.RESEND_API_KEY);
-            
-            const fromEmail = from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
-            
-            console.log(`📧 [Render] Attempting to send email via Resend to ${to} from ${fromEmail}`);
-            
-            const result = await resend.emails.send({
-                from: fromEmail,
-                to: to,
-                subject: subject,
-                html: html
-            });
-            
-            if (result.error) {
-                console.error('❌ Resend API error:', result.error);
-                throw new Error(result.error.message || 'Resend API error');
-            }
-            
-            console.log(`✅ [Render] Email sent via Resend to ${to}`, result.data?.id || '');
-            return true;
-        } catch (error) {
-            console.error('❌ [Render] Resend error:', error.message || error);
-            console.error('Resend error details:', error);
-            console.log('🔄 [Render] Falling back to Hostinger SMTP...');
-        }
-    }
-    
-    // Priority 2: Try Hostinger SMTP (if configured)
+    // Priority 1: Try Hostinger SMTP (Primary - Only Email Service)
     if (process.env.HOSTINGER_EMAIL_USER && process.env.HOSTINGER_EMAIL_PASSWORD) {
         
         // On Render, try port 587 first (TLS works better), then 465
