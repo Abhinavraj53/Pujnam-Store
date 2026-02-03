@@ -15,7 +15,6 @@ const sendOrderConfirmationEmail = async (order, customerEmail, customerName) =>
             return false;
         }
 
-        const transporter = createTransporter();
         const Settings = require('../models/Settings');
         const storeSettings = await Settings.getSettings();
         const storeName = storeSettings.storeName || 'Pujnam Store';
