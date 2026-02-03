@@ -161,19 +161,13 @@ app.get('/api/diagnostics/email', (req, res) => {
         hasPassword: !!process.env.HOSTINGER_EMAIL_PASSWORD,
         port: process.env.HOSTINGER_SMTP_PORT || 'not set'
       },
-      resend: {
-        configured: !!process.env.RESEND_API_KEY,
-        hasApiKey: !!process.env.RESEND_API_KEY,
-        hasFromEmail: !!process.env.RESEND_FROM_EMAIL,
-        fromEmail: process.env.RESEND_FROM_EMAIL || 'not set'
-      },
       gmail: {
         configured: !!(process.env.EMAIL_USER && process.env.EMAIL_PASSWORD),
         hasUser: !!process.env.EMAIL_USER,
         hasPassword: !!process.env.EMAIL_PASSWORD
       }
     },
-    recommendedService: isRender ? 'Resend (most reliable on Render)' : 'Hostinger or Resend'
+    recommendedService: 'Hostinger SMTP (Primary)'
   });
 });
 

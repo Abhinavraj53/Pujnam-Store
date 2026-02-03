@@ -163,7 +163,7 @@ const sendEmail = async (options) => {
                     await new Promise(resolve => setTimeout(resolve, 1000));
                     continue;
                 } else {
-                    console.log('🔄 All Hostinger ports failed, falling back to Resend...');
+                    console.log('🔄 All Hostinger ports failed, falling back to Gmail SMTP...');
                 }
             }
         }
@@ -171,47 +171,7 @@ const sendEmail = async (options) => {
         console.log('⚠️ HOSTINGER_EMAIL_USER not set, skipping Hostinger SMTP');
     }
     
-    // Priority 3: Try Resend as fallback (if not already tried and API key is set)
-    // This runs on Render if Resend wasn't tried first, or on localhost
-    if (process.env.RESEND_API_KEY && !resendTriedFirst) {
-        try {
-            const { Resend } = require('resend');
-            const resend = new Resend(process.env.RESEND_API_KEY);
-            
-            const fromEmail = from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
-            
-            const envLabel = isRender ? '[Render Fallback]' : '[Localhost]';
-            console.log(`📧 ${envLabel} Attempting to send email via Resend to ${to} from ${fromEmail}`);
-            
-            const result = await resend.emails.send({
-                from: fromEmail,
-                to: to,
-                subject: subject,
-                html: html
-            });
-            
-            if (result.error) {
-                console.error('❌ Resend API error:', result.error);
-                throw new Error(result.error.message || 'Resend API error');
-            }
-            
-            console.log(`✅ ${envLabel} Email sent via Resend to ${to}`, result.data?.id || '');
-            return true;
-        } catch (error) {
-            console.error('❌ Resend error:', error.message || error);
-            console.error('Resend error details:', error);
-            console.log('🔄 Falling back to Gmail SMTP...');
-        }
-    } else if (!process.env.RESEND_API_KEY) {
-        console.log('⚠️ RESEND_API_KEY not set, skipping Resend');
-        if (isRender) {
-            console.log('💡 URGENT: Add RESEND_API_KEY in Render dashboard for reliable email delivery');
-            console.log('💡 API Key: re_AUpTzVaS_6ApwDaTbMJcBnPXZoAcy5246');
-            console.log('💡 From Email: onboarding@resend.dev');
-        }
-    }
-    
-    // Priority 4: Fallback to Gmail SMTP
+    // Priority 2: Fallback to Gmail SMTP (if Hostinger fails)
     if (process.env.EMAIL_USER && process.env.EMAIL_PASSWORD) {
         let transporter = null;
         try {
@@ -274,14 +234,23 @@ const sendEmail = async (options) => {
     }
     
     // If all services failed
-    const errorMessage = 'All email services failed. Check HOSTINGER_EMAIL_USER, RESEND_API_KEY, or EMAIL_USER/EMAIL_PASSWORD';
+    const errorMessage = 'All email services failed. Check HOSTINGER_EMAIL_USER/HOSTINGER_EMAIL_PASSWORD or EMAIL_USER/EMAIL_PASSWORD';
     console.error('❌', errorMessage);
     console.error('Available env vars:', {
         hasHostingerUser: !!process.env.HOSTINGER_EMAIL_USER,
         hasHostingerPass: !!process.env.HOSTINGER_EMAIL_PASSWORD,
-        hasResendKey: !!process.env.RESEND_API_KEY,
-        hasGmailUser: !!process.env.EMAIL_USER
+        hasGmailUser: !!process.env.EMAIL_USER,
+        hasGmailPass: !!process.env.EMAIL_PASSWORD
     });
+    
+    if (isRender) {
+        console.error('💡 Render Troubleshooting:');
+        console.error('   1. Verify HOSTINGER_EMAIL_USER and HOSTINGER_EMAIL_PASSWORD are set');
+        console.error('   2. Try HOSTINGER_SMTP_PORT=587 (TLS) instead of 465 (SSL)');
+        console.error('   3. Check Hostinger email account is active');
+        console.error('   4. Contact Hostinger support if connection timeouts persist');
+    }
+    
     throw new Error(errorMessage);
 };
 
