@@ -167,15 +167,17 @@ const sendEmail = async (options) => {
         console.log('⚠️ HOSTINGER_EMAIL_USER not set, skipping Hostinger SMTP');
     }
     
-    // Priority 3: Try Resend (if not already tried on Render and API key is set)
-    if (!isRender && process.env.RESEND_API_KEY) {
+    // Priority 3: Try Resend as fallback (if not already tried and API key is set)
+    // This runs on Render if Resend wasn't tried first, or on localhost
+    if (process.env.RESEND_API_KEY && !resendTriedFirst) {
         try {
             const { Resend } = require('resend');
             const resend = new Resend(process.env.RESEND_API_KEY);
             
             const fromEmail = from || process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
             
-            console.log(`📧 [Localhost] Attempting to send email via Resend to ${to} from ${fromEmail}`);
+            const envLabel = isRender ? '[Render Fallback]' : '[Localhost]';
+            console.log(`📧 ${envLabel} Attempting to send email via Resend to ${to} from ${fromEmail}`);
             
             const result = await resend.emails.send({
                 from: fromEmail,
@@ -189,15 +191,20 @@ const sendEmail = async (options) => {
                 throw new Error(result.error.message || 'Resend API error');
             }
             
-            console.log(`✅ [Localhost] Email sent via Resend to ${to}`, result.data?.id || '');
+            console.log(`✅ ${envLabel} Email sent via Resend to ${to}`, result.data?.id || '');
             return true;
         } catch (error) {
             console.error('❌ Resend error:', error.message || error);
             console.error('Resend error details:', error);
             console.log('🔄 Falling back to Gmail SMTP...');
         }
-    } else if (!isRender) {
+    } else if (!process.env.RESEND_API_KEY) {
         console.log('⚠️ RESEND_API_KEY not set, skipping Resend');
+        if (isRender) {
+            console.log('💡 URGENT: Add RESEND_API_KEY in Render dashboard for reliable email delivery');
+            console.log('💡 API Key: re_AUpTzVaS_6ApwDaTbMJcBnPXZoAcy5246');
+            console.log('💡 From Email: onboarding@resend.dev');
+        }
     }
     
     // Priority 4: Fallback to Gmail SMTP
