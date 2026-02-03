@@ -32,9 +32,13 @@ const sendEmail = async (options) => {
         hasGmailPass: !!process.env.EMAIL_PASSWORD
     });
     
+    // Track if Resend was tried first (to avoid duplicate attempts)
+    let resendTriedFirst = false;
+    
     // Priority 1: On Render, try Resend FIRST (most reliable)
     // On localhost, try Hostinger first
     if (isRender && process.env.RESEND_API_KEY) {
+        resendTriedFirst = true;
         try {
             const { Resend } = require('resend');
             const resend = new Resend(process.env.RESEND_API_KEY);
