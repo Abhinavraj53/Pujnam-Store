@@ -46,6 +46,105 @@ const sendVerificationEmail = async (email, code) => {
     }
 };
 
+// Send welcome email to newly registered user
+const sendWelcomeEmail = async (email, name) => {
+    try {
+        const Settings = require('../models/Settings');
+        const storeSettings = await Settings.getSettings();
+        const storeName = storeSettings.storeName || 'Pujnam Store';
+        const storeEmail = storeSettings.storeEmail || 'info@pujnamstore.com';
+        const storePhone = storeSettings.storePhone || '';
+        const storeAddress = storeSettings.storeAddress || '';
+
+        const html = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff;">
+                <div style="background: linear-gradient(135deg, #FF8C00 0%, #FF6B00 100%); padding: 40px; text-align: center;">
+                    <h1 style="color: #ffffff; margin: 0; font-size: 32px; font-weight: bold;">Welcome to ${storeName}!</h1>
+                    <p style="color: #ffffff; margin: 10px 0 0 0; font-size: 16px;">AAPKI AASTHA KA SAARTHI</p>
+                </div>
+                
+                <div style="padding: 40px;">
+                    <h2 style="color: #FF8C00; margin-top: 0; font-size: 24px;">Namaste ${name || 'Valued Customer'}! 🙏</h2>
+                    
+                    <p style="color: #374151; font-size: 16px; line-height: 1.6;">
+                        We are delighted to welcome you to <strong>${storeName}</strong> - your trusted companion in faith and spirituality.
+                    </p>
+                    
+                    <p style="color: #374151; font-size: 16px; line-height: 1.6;">
+                        Your account has been successfully created! You can now explore our wide range of authentic puja items, spiritual products, and sacred essentials.
+                    </p>
+                    
+                    <div style="background: linear-gradient(135deg, #FFF5E6 0%, #FFE8CC 100%); padding: 25px; border-radius: 10px; margin: 30px 0; border-left: 4px solid #FF8C00;">
+                        <h3 style="color: #1A1A1A; margin-top: 0; font-size: 20px;">What's Next?</h3>
+                        <ul style="color: #374151; font-size: 15px; line-height: 1.8; padding-left: 20px;">
+                            <li>Browse our collection of authentic puja kits and spiritual items</li>
+                            <li>Explore special offers and festival collections</li>
+                            <li>Track your orders and manage your account</li>
+                            <li>Get personalized recommendations for your spiritual needs</li>
+                        </ul>
+                    </div>
+                    
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="${process.env.FRONTEND_URL || 'https://pujnamstore.com'}" 
+                           style="display: inline-block; background-color: #FF8C00; color: #ffffff; padding: 15px 40px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px;">
+                            Start Shopping Now
+                        </a>
+                    </div>
+                    
+                    <div style="background-color: #f9fafb; padding: 20px; border-radius: 8px; margin: 30px 0;">
+                        <h3 style="color: #374151; margin-top: 0; font-size: 18px;">Why Choose ${storeName}?</h3>
+                        <ul style="color: #6b7280; font-size: 14px; line-height: 1.8; padding-left: 20px;">
+                            <li>✅ 100% Authentic & Pure Products</li>
+                            <li>✅ Direct from Traditional Artisans</li>
+                            <li>✅ Fast & Secure Delivery</li>
+                            <li>✅ Expert Guidance & Support</li>
+                        </ul>
+                    </div>
+                    
+                    <p style="color: #374151; font-size: 15px; line-height: 1.6; margin-top: 30px;">
+                        If you have any questions or need assistance, feel free to reach out to us. We're here to help you on your spiritual journey.
+                    </p>
+                    
+                    <p style="color: #374151; font-size: 15px; line-height: 1.6;">
+                        Once again, welcome to ${storeName}! We look forward to serving you with devotion and care.
+                    </p>
+                    
+                    <p style="color: #374151; font-size: 15px; line-height: 1.6; margin-top: 30px;">
+                        With blessings,<br>
+                        <strong style="color: #FF8C00;">The ${storeName} Team</strong>
+                    </p>
+                    
+                    <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
+                    
+                    <div style="text-align: center; color: #6b7280; font-size: 12px;">
+                        <p style="margin: 5px 0;"><strong>Contact Us:</strong></p>
+                        ${storeEmail ? `<p style="margin: 5px 0;">Email: ${storeEmail}</p>` : ''}
+                        ${storePhone ? `<p style="margin: 5px 0;">Phone: ${storePhone}</p>` : ''}
+                        ${storeAddress ? `<p style="margin: 5px 0;">Address: ${storeAddress}</p>` : ''}
+                        <p style="margin: 20px 0 5px 0;">© ${new Date().getFullYear()} ${storeName} - Your Trusted Puja Store</p>
+                        <p style="margin: 5px 0;">All rights reserved.</p>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        console.log(`📧 Sending welcome email to ${email}`);
+        await sendEmail({
+            to: email,
+            subject: `Welcome to ${storeName}! Your Account is Ready 🎉`,
+            html: html,
+            from: storeEmail
+        });
+        
+        console.log(`✅ Welcome email sent successfully to ${email}`);
+        return true;
+    } catch (error) {
+        console.error(`❌ Failed to send welcome email to ${email}:`, error.message);
+        console.error('Full error:', error);
+        return false;
+    }
+};
+
 // Send password reset OTP email with retry logic
 const sendPasswordResetOTP = async (email, code, retries = 2) => {
     const smtpConfigs = 3;
@@ -301,7 +400,7 @@ router.post('/send-verification-code', async (req, res) => {
                 return res.status(400).json({ error: 'Email already verified. Please login.' });
             } else {
                 return res.status(400).json({ error: 'Account already exists but not verified. Please verify your email or contact support.' });
-            }
+        }
         }
 
         // Check for pending registration
@@ -370,7 +469,7 @@ router.post('/verify-email', async (req, res) => {
                 return res.status(400).json({ 
                     error: 'Account exists but not verified. Please contact support.' 
                 });
-            }
+        }
         }
 
         // Find pending registration
@@ -409,6 +508,14 @@ router.post('/verify-email', async (req, res) => {
 
         // Delete pending registration after successful account creation
         await PendingRegistration.deleteOne({ email });
+
+        // Send welcome email to the newly created user
+        try {
+            await sendWelcomeEmail(user.email, user.name);
+        } catch (emailError) {
+            // Don't fail account creation if welcome email fails, just log it
+            console.error('Failed to send welcome email:', emailError);
+        }
 
         // Generate token
         const token = jwt.sign(
