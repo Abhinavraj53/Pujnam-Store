@@ -118,6 +118,8 @@ const customerRoutes = require('./routes/customers');
 const settingsRoutes = require('./routes/settings');
 const festivalRoutes = require('./routes/festivals');
 const uploadRoutes = require('./routes/upload');
+const promoBlockRoutes = require('./routes/promoBlocks');
+const sectionVideoRoutes = require('./routes/sectionVideos');
 
 // Use Routes
 app.use('/api/auth', authRoutes);
@@ -132,6 +134,8 @@ app.use('/api/customers', customerRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/festivals', festivalRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/promo-blocks', promoBlockRoutes);
+app.use('/api/section-videos', sectionVideoRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
