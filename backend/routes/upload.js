@@ -1,6 +1,7 @@
 const express = require('express');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
+const { Readable } = require('stream');
 const { adminAuth } = require('../middleware/auth');
 
 const router = express.Router();
@@ -17,7 +18,7 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
+    fileSize: 5 * 1024 * 1024, // 5MB limit for images
   },
   fileFilter: (req, file, cb) => {
     // Accept only image files
@@ -25,6 +26,21 @@ const upload = multer({
       cb(null, true);
     } else {
       cb(new Error('Only image files are allowed!'), false);
+    }
+  },
+});
+
+// Multer for video uploads (larger limit)
+const videoUpload = multer({
+  storage: storage,
+  limits: {
+    fileSize: 100 * 1024 * 1024, // 100MB for video
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('video/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only video files are allowed!'), false);
     }
   },
 });
@@ -79,6 +95,35 @@ router.post('/images', adminAuth, upload.array('images', 10), async (req, res) =
   } catch (error) {
     console.error('Cloudinary upload error:', error);
     res.status(500).json({ error: error.message || 'Failed to upload images' });
+  }
+});
+
+// Upload video (saved to Cloudinary) - uses stream for large files
+router.post('/video', adminAuth, videoUpload.single('video'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No video file provided' });
+    }
+
+    const stream = Readable.from(req.file.buffer);
+    const result = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: 'pujnam-store/videos',
+          resource_type: 'video',
+        },
+        (err, result) => (err ? reject(err) : resolve(result))
+      );
+      stream.pipe(uploadStream);
+    });
+
+    res.json({
+      url: result.secure_url,
+      public_id: result.public_id,
+    });
+  } catch (error) {
+    console.error('Cloudinary video upload error:', error);
+    res.status(500).json({ error: error.message || 'Failed to upload video' });
   }
 });
 
