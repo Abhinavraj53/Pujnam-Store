@@ -77,6 +77,42 @@ router.post('/', adminAuth, async (req, res) => {
     }
 });
 
+// Bulk create products (Admin only)
+router.post('/bulk', adminAuth, async (req, res) => {
+    try {
+        const items = Array.isArray(req.body?.products) ? req.body.products : [];
+        if (items.length === 0) {
+            return res.status(400).json({ error: 'No products provided' });
+        }
+
+        const results = [];
+        for (let i = 0; i < items.length; i += 1) {
+            const payload = items[i] || {};
+            try {
+                const product = new Product(payload);
+                await product.save();
+                results.push({ index: i, status: 'created', id: product._id });
+            } catch (err) {
+                results.push({
+                    index: i,
+                    status: 'error',
+                    error: err?.message || 'Failed to create product',
+                });
+            }
+        }
+
+        const createdCount = results.filter(r => r.status === 'created').length;
+        const errorCount = results.filter(r => r.status === 'error').length;
+
+        res.status(201).json({
+            message: `Bulk create finished. Created: ${createdCount}, Errors: ${errorCount}`,
+            results,
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Update product (Admin only)
 router.put('/:id', adminAuth, async (req, res) => {
     try {
