@@ -32,7 +32,7 @@ const settingsSchema = new mongoose.Schema({
     },
     logo: {
         type: String,
-        default: 'https://images.pexels.com/photos/8989571/pexels-photo-8989571.jpeg'
+        // default: 'https://images.pexels.com/photos/8989571/pexels-photo-8989571.jpeg'
     },
     tagline: {
         type: String,
