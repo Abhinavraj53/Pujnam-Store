@@ -2,7 +2,7 @@ const express = require('express');
 const Order = require('../models/Order');
 const Cart = require('../models/Cart');
 const Product = require('../models/Product');
-const { auth, adminAuth } = require('../middleware/auth');
+const { auth, adminAuth, getTokenFromRequest } = require('../middleware/auth');
 const { sendEmail } = require('../utils/emailService');
 
 const router = express.Router();
@@ -166,7 +166,7 @@ router.post('/', async (req, res) => {
         let userEmail = null;
         let userName = null;
         try {
-            const token = req.header('Authorization')?.replace('Bearer ', '');
+            const token = getTokenFromRequest(req);
             if (token) {
                 const jwt = require('jsonwebtoken');
                 const decoded = jwt.verify(token, process.env.JWT_SECRET);

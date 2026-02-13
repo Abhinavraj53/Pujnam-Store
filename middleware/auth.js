@@ -1,9 +1,31 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+const parseCookies = (cookieHeader = '') => {
+    return cookieHeader
+        .split(';')
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .reduce((acc, part) => {
+            const separatorIndex = part.indexOf('=');
+            if (separatorIndex === -1) return acc;
+            const key = part.slice(0, separatorIndex).trim();
+            const value = decodeURIComponent(part.slice(separatorIndex + 1).trim());
+            acc[key] = value;
+            return acc;
+        }, {});
+};
+
+const getTokenFromRequest = (req) => {
+    const authHeaderToken = req.header('Authorization')?.replace('Bearer ', '');
+    if (authHeaderToken) return authHeaderToken;
+    const cookies = parseCookies(req.headers.cookie || '');
+    return cookies.auth_token || null;
+};
+
 const auth = async (req, res, next) => {
     try {
-        const token = req.header('Authorization')?.replace('Bearer ', '');
+        const token = getTokenFromRequest(req);
 
         if (!token) {
             return res.status(401).json({ error: 'Access denied. No token provided.' });
@@ -37,4 +59,4 @@ const adminAuth = async (req, res, next) => {
     }
 };
 
-module.exports = { auth, adminAuth };
+module.exports = { auth, adminAuth, getTokenFromRequest };

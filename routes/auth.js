@@ -13,6 +13,35 @@ const generateVerificationCode = () => {
 };
 
 const normalizeEmail = (email = '') => String(email).toLowerCase().trim();
+const AUTH_COOKIE_NAME = 'auth_token';
+const AUTH_TOKEN_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+const getAuthCookieOptions = () => {
+    const isProduction = process.env.NODE_ENV === 'production';
+    const options = {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
+        maxAge: AUTH_TOKEN_MAX_AGE_MS,
+        path: '/'
+    };
+
+    if (process.env.COOKIE_DOMAIN) {
+        options.domain = process.env.COOKIE_DOMAIN;
+    }
+
+    return options;
+};
+
+const setAuthCookie = (res, token) => {
+    res.cookie(AUTH_COOKIE_NAME, token, getAuthCookieOptions());
+};
+
+const clearAuthCookie = (res) => {
+    const clearOptions = { ...getAuthCookieOptions() };
+    delete clearOptions.maxAge;
+    res.clearCookie(AUTH_COOKIE_NAME, clearOptions);
+};
 
 // Send verification email using email service (Resend, Hostinger, or Gmail)
 const sendVerificationEmail = async (email, code) => {
@@ -431,6 +460,7 @@ router.post('/verify-email', async (req, res) => {
                     process.env.JWT_SECRET,
                     { expiresIn: '7d' }
                 );
+                setAuthCookie(res, token);
                 return res.json({
                     message: 'Email already verified',
                     user: {
@@ -501,6 +531,7 @@ router.post('/verify-email', async (req, res) => {
             process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
+        setAuthCookie(res, token);
 
         res.json({
             message: 'Email verified successfully. Your account has been created!',
@@ -563,6 +594,7 @@ router.post('/login', async (req, res) => {
             process.env.JWT_SECRET,
             { expiresIn: '7d' }
         );
+        setAuthCookie(res, token);
 
         res.json({
             message: 'Login successful',
@@ -577,6 +609,15 @@ router.post('/login', async (req, res) => {
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
+    }
+});
+
+router.post('/logout', async (req, res) => {
+    try {
+        clearAuthCookie(res);
+        res.json({ message: 'Logged out successfully' });
+    } catch (error) {
+        res.status(500).json({ error: error.message || 'Logout failed' });
     }
 });
 // Get current user
