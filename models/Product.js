@@ -10,6 +10,10 @@ const productSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    short_description: {
+        type: String,
+        default: ''
+    },
     price: {
         type: Number,
         required: true,
@@ -52,6 +56,14 @@ const productSchema = new mongoose.Schema({
     specifications: {
         type: Map,
         of: String
+    },
+    deity: {
+        type: String,
+        trim: true
+    },
+    attributes: {
+        type: mongoose.Schema.Types.Mixed,
+        default: {}
     },
     createdAt: {
         type: Date,

@@ -134,6 +134,8 @@ const userSchema = new mongoose.Schema({
 // Hash password before saving
 userSchema.pre('save', async function (next) {
     if (!this.isModified('password')) return next();
+    // Some internal flows (verified pending registrations) pass an already-hashed password.
+    if (this.$locals && this.$locals.skipPasswordHash) return next();
     this.password = await bcrypt.hash(this.password, 12);
     next();
 });

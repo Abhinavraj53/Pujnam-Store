@@ -12,6 +12,8 @@ const generateVerificationCode = () => {
     return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
+const normalizeEmail = (email = '') => String(email).toLowerCase().trim();
+
 // Send verification email using email service (Resend, Hostinger, or Gmail)
 const sendVerificationEmail = async (email, code) => {
     try {
@@ -147,22 +149,15 @@ const sendWelcomeEmail = async (email, name) => {
 
 // Send password reset OTP email with retry logic
 const sendPasswordResetOTP = async (email, code, retries = 2) => {
-    const smtpConfigs = 3;
-    const totalAttempts = smtpConfigs * (retries + 1);
-    
-    for (let attempt = 0; attempt < totalAttempts; attempt++) {
-        const configIndex = Math.floor(attempt / (retries + 1));
-        const retryIndex = attempt % (retries + 1);
-        let transporter = null;
-        
+    for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-            transporter = createTransporter(configIndex);
             const Settings = require('../models/Settings');
             const storeSettings = await Settings.getSettings();
             const storeName = storeSettings.storeName || 'Pujnam Store';
-            
-            const mailOptions = {
-                from: process.env.EMAIL_USER || 'noreply@pujnamstore.com',
+            const storeEmail = storeSettings.storeEmail || `"${storeName}" <info@${process.env.MAILGUN_DOMAIN || 'pujnamstore.com'}>`;
+
+            await sendEmail({
+                from: storeEmail,
                 to: email,
                 subject: `Password Reset OTP - ${storeName}`,
                 html: `
@@ -181,7 +176,7 @@ const sendPasswordResetOTP = async (email, code, retries = 2) => {
                                 <h1 style="color: #FF8C00; font-size: 36px; margin: 0; letter-spacing: 8px; font-weight: bold;">${code}</h1>
                             </div>
                             
-                            <p style="color: #dc2626; font-weight: bold;">⚠️ This OTP will expire in 10 minutes.</p>
+                            <p style="color: #dc2626; font-weight: bold;">This OTP will expire in 10 minutes.</p>
                             
                             <div style="background-color: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; margin: 20px 0; border-radius: 4px;">
                                 <p style="margin: 0; color: #92400e;"><strong>Security Tip:</strong> If you didn't request this password reset, please ignore this email. Your password will remain unchanged.</p>
@@ -191,64 +186,33 @@ const sendPasswordResetOTP = async (email, code, retries = 2) => {
                             
                             <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 30px 0;">
                             <p style="color: #6b7280; font-size: 12px; text-align: center;">
-                                © ${new Date().getFullYear()} ${storeName} - Your Trusted Puja Store<br>
+                                Copyright ${new Date().getFullYear()} ${storeName} - Your Trusted Puja Store<br>
                                 This is an automated email, please do not reply.
                             </p>
                         </div>
-                </div>
-            `
-        };
-            
-            // Skip verification (often fails on Render but send works)
-            if (attempt === 0) {
-                try {
-                    const verifyPromise = transporter.verify();
-                    const verifyTimeout = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('Verify timeout')), 5000)
-                    );
-                    await Promise.race([verifyPromise, verifyTimeout]);
-                } catch (verifyError) {
-                    // Continue anyway
-                }
-            }
-            
-            // Set timeout for sendMail (increased to 25 seconds)
-            const sendPromise = transporter.sendMail(mailOptions);
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Email send timeout after 25 seconds')), 25000)
-            );
-            
-            const result = await Promise.race([sendPromise, timeoutPromise]);
-            console.log(`✅ Password reset OTP sent to ${email} (config ${configIndex + 1}, attempt ${retryIndex + 1})`, result.messageId || '');
-            
-            try {
-                transporter.close();
-            } catch (closeError) {}
+                    </div>
+                `
+            });
+
+            console.log(`Password reset OTP sent to ${email} (attempt ${attempt + 1}/${retries + 1})`);
             return true;
         } catch (error) {
-            console.error(`❌ Password reset email error (config ${configIndex + 1}, attempt ${retryIndex + 1}/${totalAttempts}):`, {
+            console.error(`Password reset email error (attempt ${attempt + 1}/${retries + 1}):`, {
                 message: error.message,
                 code: error.code
             });
-            
-            if (transporter) {
-                try {
-                    transporter.close();
-                } catch (closeError) {}
-            }
-            
-            if (attempt === totalAttempts - 1) {
-                console.error(`❌ Failed to send password reset OTP to ${email} after ${totalAttempts} attempts`);
+
+            if (attempt === retries) {
+                console.error(`Failed to send password reset OTP to ${email} after ${retries + 1} attempts`);
                 return false;
             }
-            
-            const waitTime = 1000 * (retryIndex + 1);
+
+            const waitTime = 1000 * (attempt + 1);
             await new Promise(resolve => setTimeout(resolve, waitTime));
         }
     }
     return false;
 };
-
 // Send password change OTP email using email service
 const sendPasswordChangeOTP = async (email, code, userName) => {
     try {
@@ -320,24 +284,29 @@ const sendPasswordChangeOTP = async (email, code, userName) => {
 router.post('/register', async (req, res) => {
     try {
         const { email, password, name, phone } = req.body;
+        const normalizedEmail = normalizeEmail(email);
+
+        if (!normalizedEmail) {
+            return res.status(400).json({ error: 'Valid email is required' });
+        }
 
         // Check if user already exists (verified or unverified account)
-        const existingUser = await User.findOne({ email });
+        const existingUser = await User.findOne({ email: normalizedEmail });
         if (existingUser) {
             if (existingUser.emailVerified) {
                 return res.status(400).json({ error: 'Email already registered. Please login instead.' });
             } else {
                 // Unverified account exists - delete it (user needs to register again and verify)
-                await User.deleteOne({ email });
-                console.log(`Deleted unverified account: ${email}`);
+                await User.deleteOne({ email: normalizedEmail });
+                console.log(`Deleted unverified account: ${normalizedEmail}`);
             }
         }
 
         // Check if there's already a pending registration for this email
-        const existingPending = await PendingRegistration.findOne({ email });
+        const existingPending = await PendingRegistration.findOne({ email: normalizedEmail });
         if (existingPending) {
             // Delete old pending registration
-            await PendingRegistration.deleteOne({ email });
+            await PendingRegistration.deleteOne({ email: normalizedEmail });
         }
 
         // Generate verification code
@@ -347,9 +316,9 @@ router.post('/register', async (req, res) => {
 
         // Store registration data in pending registration (NOT in User collection)
         const pendingRegistration = new PendingRegistration({ 
-            email, 
-            password, 
-            name, 
+            email: normalizedEmail,
+            password,
+            name,
             phone,
             emailVerificationCode: verificationCode,
             emailVerificationCodeExpiry: codeExpiry
@@ -357,54 +326,58 @@ router.post('/register', async (req, res) => {
         await pendingRegistration.save();
 
         // Send verification email
-        console.log(`📧 Attempting to send verification email to ${email}`);
-        const emailSent = await sendVerificationEmail(email, verificationCode);
-        
+        console.log(`Attempting to send verification email to ${normalizedEmail}`);
+        const emailSent = await sendVerificationEmail(normalizedEmail, verificationCode);
+
         if (!emailSent) {
             // If email fails, delete pending registration
-            await PendingRegistration.deleteOne({ email });
-            console.error(`❌ Registration failed for ${email} - email sending failed`);
-            return res.status(500).json({ 
+            await PendingRegistration.deleteOne({ email: normalizedEmail });
+            console.error(`Registration failed for ${normalizedEmail} - email sending failed`);
+            return res.status(500).json({
                 error: 'Failed to send verification email. Please check your email service configuration and try again.',
                 details: process.env.NODE_ENV === 'development' ? 'Check server logs for detailed error information' : undefined
             });
         }
-        
-        console.log(`✅ Verification email sent successfully to ${email}`);
+
+        console.log(`Verification email sent successfully to ${normalizedEmail}`);
 
         res.status(201).json({
             message: 'Verification code sent to your email. Please verify to complete registration.',
             requiresVerification: true,
-            email: email,
+            email: normalizedEmail,
             note: 'Your account will be created only after email verification. Please check your email for the OTP.'
         });
     } catch (error) {
         console.error('Registration error:', error);
         // Clean up on error
         if (req.body.email) {
-            await PendingRegistration.deleteOne({ email: req.body.email }).catch(() => {});
+            await PendingRegistration.deleteOne({ email: normalizeEmail(req.body.email) }).catch(() => {});
         }
         res.status(500).json({ error: error.message || 'Registration failed. Please try again.' });
     }
 });
-
 // Send verification code (for pending registrations only)
 router.post('/send-verification-code', async (req, res) => {
     try {
         const { email } = req.body;
+        const normalizedEmail = normalizeEmail(email);
+
+        if (!normalizedEmail) {
+            return res.status(400).json({ error: 'Valid email is required' });
+        }
 
         // Check if user already exists and is verified
-        const existingUser = await User.findOne({ email });
+        const existingUser = await User.findOne({ email: normalizedEmail });
         if (existingUser) {
             if (existingUser.emailVerified) {
                 return res.status(400).json({ error: 'Email already verified. Please login.' });
             } else {
                 return res.status(400).json({ error: 'Account already exists but not verified. Please verify your email or contact support.' });
-        }
+            }
         }
 
         // Check for pending registration
-        const pendingRegistration = await PendingRegistration.findOne({ email });
+        const pendingRegistration = await PendingRegistration.findOne({ email: normalizedEmail });
         if (!pendingRegistration) {
             return res.status(404).json({ 
                 error: 'No pending registration found. Please register again.' 
@@ -421,8 +394,8 @@ router.post('/send-verification-code', async (req, res) => {
         await pendingRegistration.save();
 
         // Send verification email
-        const emailSent = await sendVerificationEmail(email, verificationCode);
-        
+        const emailSent = await sendVerificationEmail(normalizedEmail, verificationCode);
+
         if (!emailSent) {
             return res.status(500).json({ 
                 error: 'Failed to send verification email. Please try again.' 
@@ -438,14 +411,18 @@ router.post('/send-verification-code', async (req, res) => {
         res.status(500).json({ error: error.message || 'Failed to send verification code' });
     }
 });
-
 // Verify email and create account (only after OTP verification)
 router.post('/verify-email', async (req, res) => {
     try {
         const { email, code } = req.body;
+        const normalizedEmail = normalizeEmail(email);
+
+        if (!normalizedEmail) {
+            return res.status(400).json({ error: 'Valid email is required' });
+        }
 
         // Check if user already exists (should not happen, but safety check)
-        const existingUser = await User.findOne({ email });
+        const existingUser = await User.findOne({ email: normalizedEmail });
         if (existingUser) {
             if (existingUser.emailVerified) {
                 // Generate token for already verified user
@@ -469,11 +446,11 @@ router.post('/verify-email', async (req, res) => {
                 return res.status(400).json({ 
                     error: 'Account exists but not verified. Please contact support.' 
                 });
-        }
+            }
         }
 
         // Find pending registration
-        const pendingRegistration = await PendingRegistration.findOne({ email });
+        const pendingRegistration = await PendingRegistration.findOne({ email: normalizedEmail });
         if (!pendingRegistration) {
             return res.status(404).json({ 
                 error: 'No pending registration found. Please register again.' 
@@ -488,7 +465,7 @@ router.post('/verify-email', async (req, res) => {
         // Check if code expired
         if (new Date() > pendingRegistration.emailVerificationCodeExpiry) {
             // Delete expired pending registration
-            await PendingRegistration.deleteOne({ email });
+            await PendingRegistration.deleteOne({ email: normalizedEmail });
             return res.status(400).json({ 
                 error: 'Verification code expired. Please register again.' 
             });
@@ -504,10 +481,11 @@ router.post('/verify-email', async (req, res) => {
             emailVerificationCode: null,
             emailVerificationCodeExpiry: null
         });
+        user.$locals = { skipPasswordHash: true };
         await user.save();
 
         // Delete pending registration after successful account creation
-        await PendingRegistration.deleteOne({ email });
+        await PendingRegistration.deleteOne({ email: normalizedEmail });
 
         // Send welcome email to the newly created user
         try {
@@ -540,7 +518,7 @@ router.post('/verify-email', async (req, res) => {
         
         // If user creation fails but pending registration exists, clean it up
         if (req.body.email) {
-            await PendingRegistration.deleteOne({ email: req.body.email }).catch(() => {});
+            await PendingRegistration.deleteOne({ email: normalizeEmail(req.body.email) }).catch(() => {});
         }
         
         res.status(500).json({ 
@@ -548,14 +526,18 @@ router.post('/verify-email', async (req, res) => {
         });
     }
 });
-
 // Login
 router.post('/login', async (req, res) => {
     try {
         const { email, password } = req.body;
+        const normalizedEmail = normalizeEmail(email);
+
+        if (!normalizedEmail || !password) {
+            return res.status(400).json({ error: 'Email and password are required' });
+        }
 
         // Find user
-        const user = await User.findOne({ email });
+        const user = await User.findOne({ email: normalizedEmail });
         if (!user) {
             return res.status(401).json({ error: 'Invalid email or password' });
         }
@@ -597,7 +579,6 @@ router.post('/login', async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 });
-
 // Get current user
 router.get('/me', auth, async (req, res) => {
     try {
@@ -803,21 +784,22 @@ router.put('/addresses/:addressId/default', auth, async (req, res) => {
 router.post('/forgot-password', async (req, res) => {
     try {
         const { email } = req.body;
+        const normalizedEmail = normalizeEmail(email);
 
-        if (!email) {
+        if (!normalizedEmail) {
             return res.status(400).json({ error: 'Email is required' });
         }
 
         // Find user by email (only verified users can reset password)
         const user = await User.findOne({ 
-            email: email.toLowerCase().trim(),
+            email: normalizedEmail,
             emailVerified: true // Only allow password reset for verified accounts
         });
         
         // Check if account exists - show error if not found
         if (!user) {
             // Also check if there's a pending registration
-            const pendingRegistration = await PendingRegistration.findOne({ email: email.toLowerCase().trim() });
+            const pendingRegistration = await PendingRegistration.findOne({ email: normalizedEmail });
             
             if (pendingRegistration) {
                 return res.status(400).json({ 
@@ -861,14 +843,14 @@ router.post('/forgot-password', async (req, res) => {
         res.status(500).json({ error: error.message || 'Failed to process password reset request' });
     }
 });
-
 // Reset Password - Verify OTP and Reset Password
 router.post('/reset-password', async (req, res) => {
     try {
         const { email, otp, newPassword } = req.body;
+        const normalizedEmail = normalizeEmail(email);
 
         // Validate input
-        if (!email || !otp || !newPassword) {
+        if (!normalizedEmail || !otp || !newPassword) {
             return res.status(400).json({ error: 'Email, OTP, and new password are required' });
         }
 
@@ -877,7 +859,7 @@ router.post('/reset-password', async (req, res) => {
         }
 
         // Find user
-        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        const user = await User.findOne({ email: normalizedEmail });
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
@@ -915,17 +897,17 @@ router.post('/reset-password', async (req, res) => {
         res.status(500).json({ error: error.message || 'Failed to reset password' });
     }
 });
-
 // Resend Password Reset OTP
 router.post('/resend-password-reset-otp', async (req, res) => {
     try {
         const { email } = req.body;
+        const normalizedEmail = normalizeEmail(email);
 
-        if (!email) {
+        if (!normalizedEmail) {
             return res.status(400).json({ error: 'Email is required' });
         }
 
-        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        const user = await User.findOne({ email: normalizedEmail });
         
         // For security, don't reveal if email exists
         if (!user) {
@@ -962,7 +944,6 @@ router.post('/resend-password-reset-otp', async (req, res) => {
         res.status(500).json({ error: error.message || 'Failed to resend password reset OTP' });
     }
 });
-
 // Change Password - Request OTP (Authenticated Users)
 router.post('/change-password/request-otp', auth, async (req, res) => {
     try {
